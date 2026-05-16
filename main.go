@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,6 +35,8 @@ type Entry struct {
 	Updated   time.Time `json:"updated_at"`
 	Day       string    `json:"day"` // calendar day YYYY-MM-DD
 	EditCount int       `json:"edit_count"`
+	Mood      int       `json:"mood"`
+	Fulfill   int       `json:"fulfillment"`
 }
 
 func main() {
@@ -77,6 +80,7 @@ func main() {
 	mux.Handle("POST /api/entries", app.requireAuth(http.HandlerFunc(app.apiSaveEntry)))
 	mux.Handle("GET /api/entries/date/{date}", app.requireAuth(http.HandlerFunc(app.apiGetEntryByDate)))
 	mux.Handle("GET /api/search", app.requireAuth(http.HandlerFunc(app.apiSearch)))
+	mux.Handle("GET /api/stats", app.requireAuth(http.HandlerFunc(app.apiStats)))
 	mux.Handle("GET /api/settings", app.requireAuth(http.HandlerFunc(app.apiGetSettings)))
 	mux.Handle("POST /api/settings", app.requireAuth(http.HandlerFunc(app.apiUpdateSettings)))
 	mux.Handle("GET /api/export", app.requireAuth(http.HandlerFunc(app.apiExport)))
@@ -259,6 +263,8 @@ func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 		Date    string `json:"date"`
 		Content string `json:"content"`
 		Title   string `json:"title"`
+		Mood    int    `json:"mood"`
+		Fulfill int    `json:"fulfillment"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -288,7 +294,10 @@ func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.upsertByDateWithUpdated(req.Date, req.Title, req.Content, nil); err != nil {
+	req.Mood = normalizeRating(req.Mood)
+	req.Fulfill = normalizeRating(req.Fulfill)
+
+	if err := a.upsertByDateWithUpdated(req.Date, req.Title, req.Content, req.Mood, req.Fulfill, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -322,6 +331,23 @@ func (a *App) apiSearch(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+func (a *App) apiStats(w http.ResponseWriter, r *http.Request) {
+	end := time.Now()
+	start := end.AddDate(0, 0, -364)
+	entries, err := a.listEntriesByRangeAll(start, end.AddDate(0, 0, 1))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]any{
+		"weeks": buildContributionWeeks(entries, end),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (a *App) apiGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -459,7 +485,7 @@ func (a *App) apiImport(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if err := a.upsertByDateWithUpdated(dateStr, title, content, updPtr); err == nil {
+		if err := a.upsertByDateWithUpdated(dateStr, title, content, 3, 3, updPtr); err == nil {
 			count++
 		}
 	}
@@ -482,11 +508,70 @@ func makeSnippet(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
+type DayCell struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+	Level int    `json:"level"`
+}
+
 func parseDateOnly(s string) (time.Time, error) {
 	if len(s) != 10 {
 		return time.Time{}, fmt.Errorf("bad date")
 	}
 	return time.ParseInLocation("2006-01-02", s, time.Local)
+}
+
+func normalizeRating(v int) int {
+	if v < 1 || v > 5 {
+		return 3
+	}
+	return v
+}
+
+func startOfWeekMonday(t time.Time) time.Time {
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	weekday := int(day.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+	return day.AddDate(0, 0, -(weekday - 1))
+}
+
+func buildContributionWeeks(entries []*Entry, end time.Time) [][]DayCell {
+	counts := map[string]int{}
+	maxCount := 0
+	for _, e := range entries {
+		if e.Day == "" {
+			continue
+		}
+		counts[e.Day] += e.EditCount
+		if counts[e.Day] > maxCount {
+			maxCount = counts[e.Day]
+		}
+	}
+	start := startOfWeekMonday(end.AddDate(0, 0, -364))
+	endDate := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location())
+	var weeks [][]DayCell
+	for cursor := start; !cursor.After(endDate); cursor = cursor.AddDate(0, 0, 7) {
+		week := make([]DayCell, 0, 7)
+		for i := 0; i < 7; i++ {
+			day := cursor.AddDate(0, 0, i)
+			key := day.Format("2006-01-02")
+			count := counts[key]
+			level := 0
+			if count > 0 && maxCount > 0 {
+				level = int(math.Ceil(float64(count) / float64(maxCount) * 4))
+				if level < 1 {
+					level = 1
+				} else if level > 4 {
+					level = 4
+				}
+			}
+			week = append(week, DayCell{Date: key, Count: count, Level: level})
+		}
+		weeks = append(weeks, week)
+	}
+	return weeks
 }
 
 func subtleEqual(a, b string) bool {
@@ -521,7 +606,9 @@ func migrate(db *sql.DB) error {
 			content TEXT NOT NULL DEFAULT '',
 			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
 			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-			edit_count INTEGER NOT NULL DEFAULT 0
+			edit_count INTEGER NOT NULL DEFAULT 0,
+			mood INTEGER NOT NULL DEFAULT 3,
+			fulfillment INTEGER NOT NULL DEFAULT 3
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);`,
 	}
@@ -538,6 +625,16 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("add edit_count column: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN mood INTEGER NOT NULL DEFAULT 3`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("add mood column: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN fulfillment INTEGER NOT NULL DEFAULT 3`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("add fulfillment column: %w", err)
 		}
 	}
 	if _, err := db.Exec(`UPDATE entries SET day = DATE(created_at,'localtime') WHERE day IS NULL OR day=''`); err != nil {
@@ -606,7 +703,7 @@ func maskToken(tok string) string {
 }
 
 func (a *App) listAllEntries() ([]*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count FROM entries ORDER BY created_at ASC`)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment FROM entries ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -615,7 +712,7 @@ func (a *App) listAllEntries() ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -625,7 +722,7 @@ func (a *App) listAllEntries() ([]*Entry, error) {
 	return list, nil
 }
 
-func (a *App) upsertByDateWithUpdated(dateStr, title, content string, updatedAt *time.Time) error {
+func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulfill int, updatedAt *time.Time) error {
 	if len(dateStr) != 10 {
 		return fmt.Errorf("bad date")
 	}
@@ -633,6 +730,8 @@ func (a *App) upsertByDateWithUpdated(dateStr, title, content string, updatedAt 
 	if err != nil {
 		return err
 	}
+	mood = normalizeRating(mood)
+	fulfill = normalizeRating(fulfill)
 	createdUTC := dayLocal.UTC()
 	existing, _ := a.getEntryByDate(dateStr)
 	if existing == nil {
@@ -640,19 +739,19 @@ func (a *App) upsertByDateWithUpdated(dateStr, title, content string, updatedAt 
 		if updatedAt != nil {
 			upd = updatedAt.UTC()
 		}
-		_, err = a.DB.Exec(`INSERT INTO entries(day, title, content, created_at, updated_at, edit_count) VALUES(?,?,?,?,?,?)`, dateStr, title, content, createdUTC, upd, 1)
+		_, err = a.DB.Exec(`INSERT INTO entries(day, title, content, created_at, updated_at, edit_count, mood, fulfillment) VALUES(?,?,?,?,?,?,?,?)`, dateStr, title, content, createdUTC, upd, 1, mood, fulfill)
 		return err
 	}
 	upd := time.Now().UTC()
 	if updatedAt != nil {
 		upd = updatedAt.UTC()
 	}
-	_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, edit_count=edit_count+1 WHERE id=?`, title, content, upd, existing.ID)
+	_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, edit_count=edit_count+1, mood=?, fulfillment=? WHERE id=?`, title, content, upd, mood, fulfill, existing.ID)
 	return err
 }
 
 func (a *App) getEntryByDate(date string) (*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count FROM entries WHERE day=? LIMIT 1`, date)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment FROM entries WHERE day=? LIMIT 1`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -660,7 +759,7 @@ func (a *App) getEntryByDate(date string) (*Entry, error) {
 	if rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -671,7 +770,7 @@ func (a *App) getEntryByDate(date string) (*Entry, error) {
 }
 
 func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count FROM entries ORDER BY day DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment FROM entries ORDER BY day DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -680,7 +779,7 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -693,7 +792,7 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	like := "%" + q + "%"
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day, edit_count
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment
 		FROM entries
 		WHERE title LIKE ? OR content LIKE ?
 		ORDER BY day DESC
@@ -707,7 +806,7 @@ func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -719,7 +818,7 @@ func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 
 func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entry, error) {
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day, edit_count
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment
 		FROM entries
 		WHERE day >= ? AND day < ?
 		ORDER BY day DESC
@@ -733,7 +832,32 @@ func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entr
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
+			return nil, err
+		}
+		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
+		e.Updated, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		list = append(list, &e)
+	}
+	return list, nil
+}
+
+func (a *App) listEntriesByRangeAll(from, to time.Time) ([]*Entry, error) {
+	rows, err := a.DB.Query(`
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment
+		FROM entries
+		WHERE day >= ? AND day < ?
+		ORDER BY day ASC
+	`, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*Entry
+	for rows.Next() {
+		var e Entry
+		var createdStr, updatedStr string
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)

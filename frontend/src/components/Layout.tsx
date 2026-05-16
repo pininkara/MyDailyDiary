@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Book, Search, Settings, LogOut, History } from 'lucide-react';
+import { Book, Search, Settings, LogOut, History, BarChart3 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { MouseRippleBackground } from './MouseRippleBackground';
 
@@ -13,6 +13,7 @@ export default function Layout() {
         { icon: Book, label: 'Diary', path: '/' },
         { icon: History, label: 'History', path: '/history' },
         { icon: Search, label: 'Search', path: '/search' },
+        { icon: BarChart3, label: 'Stats', path: '/stats' },
         { icon: Settings, label: 'Settings', path: '/settings' },
     ];
 

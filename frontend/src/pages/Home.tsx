@@ -1,17 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { format, addDays, subDays, parseISO } from 'date-fns';
-import { ChevronLeft, ChevronRight, Save, Calendar as CalendarIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Save } from 'lucide-react';
 import api from '../lib/api';
-
-interface Entry {
-    id: number;
-    title: string;
-    content: string;
-    day: string;
-    updated_at: string;
-    edit_count: number;
-}
 
 export default function Home() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -31,6 +22,8 @@ export default function Home() {
     const [loading, setLoading] = useState(false);
     const [lastSaved, setLastSaved] = useState<Date | null>(null);
     const [editCount, setEditCount] = useState(0);
+    const [mood, setMood] = useState(3);
+    const [fulfillment, setFulfillment] = useState(3);
 
     const dateStr = format(date, 'yyyy-MM-dd');
 
@@ -48,11 +41,15 @@ export default function Home() {
                 setTitle(res.data.title || '');
                 setLastSaved(res.data.updated_at ? parseISO(res.data.updated_at) : null);
                 setEditCount(res.data.edit_count || 0);
+                setMood(res.data.mood ?? 0);
+                setFulfillment(res.data.fulfillment ?? 0);
             } else {
                 setContent('');
                 setTitle('');
                 setLastSaved(null);
                 setEditCount(0);
+                setMood(3);
+                setFulfillment(3);
             }
         } catch (err: any) {
             if (err.response?.status === 404) {
@@ -60,6 +57,8 @@ export default function Home() {
                 setTitle('');
                 setLastSaved(null);
                 setEditCount(0);
+                setMood(3);
+                setFulfillment(3);
             }
         } finally {
             setLoading(false);
@@ -73,10 +72,14 @@ export default function Home() {
                 date: dateStr,
                 content,
                 title,
+                mood,
+                fulfillment,
             });
             if (res.data) {
                 setLastSaved(res.data.updated_at ? parseISO(res.data.updated_at) : new Date());
                 setEditCount(res.data.edit_count || 0);
+                setMood(res.data.mood ?? mood);
+                setFulfillment(res.data.fulfillment ?? fulfillment);
             } else {
                 setLastSaved(new Date());
             }
@@ -146,6 +149,46 @@ export default function Home() {
                         <Save className="w-4 h-4" />
                         {saving ? 'Saving...' : 'Save'}
                     </button>
+                </div>
+            </div>
+
+            {/* Mood & Fulfillment */}
+            <div className="grid md:grid-cols-2 gap-4">
+                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+                    <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Mood</span>
+                        <span className="text-xs text-gray-400">{mood}/5</span>
+                    </div>
+                    <div className="mt-3 flex items-center gap-3">
+                        <span className="text-lg">😭</span>
+                        <input
+                            type="range"
+                            min={1}
+                            max={5}
+                            value={mood}
+                            onChange={(e) => setMood(Number(e.target.value))}
+                            className="flex-1"
+                        />
+                        <span className="text-lg">🥰</span>
+                    </div>
+                </div>
+                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+                    <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Fulfillment</span>
+                        <span className="text-xs text-gray-400">{fulfillment}/5</span>
+                    </div>
+                    <div className="mt-3 flex items-center gap-3">
+                        <span className="text-lg">😴</span>
+                        <input
+                            type="range"
+                            min={1}
+                            max={5}
+                            value={fulfillment}
+                            onChange={(e) => setFulfillment(Number(e.target.value))}
+                            className="flex-1"
+                        />
+                        <span className="text-lg">💪</span>
+                    </div>
                 </div>
             </div>
 

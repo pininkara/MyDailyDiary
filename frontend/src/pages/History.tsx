@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
-import { Calendar, Clock, ChevronDown, ChevronUp, Edit3 } from 'lucide-react';
+import { Calendar, Clock, ChevronDown, ChevronUp, Edit3, Heart, BatteryFull } from 'lucide-react';
 
 interface HistoryEntry {
     id: number;
@@ -13,6 +13,8 @@ interface HistoryEntry {
     day: string;
     snippet: string;
     edit_count: number;
+    mood: number;
+    fulfillment: number;
 }
 
 export default function History() {
@@ -157,6 +159,14 @@ export default function History() {
                                 <span className="flex items-center gap-1">
                                     <Clock className="w-4 h-4" />
                                     {format(parseISO(entry.updated_at), 'HH:mm')}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <Heart className="w-4 h-4" />
+                                    {entry.mood ?? 0}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <BatteryFull className="w-4 h-4" />
+                                    {entry.fulfillment ?? 0}
                                 </span>
                                 <span className="flex items-center gap-1">
                                     <Edit3 className="w-4 h-4" />

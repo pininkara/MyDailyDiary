@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
-import { Search as SearchIcon, Calendar } from 'lucide-react';
+import { Search as SearchIcon, Calendar, Clock, Edit3, Heart, BatteryFull } from 'lucide-react';
 import { TextHighlight } from '../components/TextHighlight';
 
 interface SearchEntry {
@@ -11,6 +11,10 @@ interface SearchEntry {
     content: string;
     day: string;
     created_at: string;
+    updated_at: string;
+    edit_count: number;
+    mood: number;
+    fulfillment: number;
 }
 
 export default function Search() {
@@ -75,12 +79,30 @@ export default function Search() {
                             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                                 <TextHighlight text={entry.title || 'Untitled'} query={query} />
                             </h3>
-                            <span className="flex items-center gap-1 text-sm text-gray-500">
-                                <Calendar className="w-4 h-4" />
-                                {format(parseISO(entry.day), 'MMM d, yyyy')}
-                            </span>
+                            <div className="flex items-center text-sm text-gray-500 gap-4">
+                                <span className="flex items-center gap-1">
+                                    <Calendar className="w-4 h-4" />
+                                    {format(parseISO(entry.day), 'MMM d, yyyy')}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <Clock className="w-4 h-4" />
+                                    {format(parseISO(entry.updated_at), 'HH:mm')}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <Heart className="w-4 h-4" />
+                                    {entry.mood ?? 0}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <BatteryFull className="w-4 h-4" />
+                                    {entry.fulfillment ?? 0}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <Edit3 className="w-4 h-4" />
+                                    {entry.edit_count}
+                                </span>
+                            </div>
                         </div>
-                        <p className="text-gray-600 dark:text-gray-300 line-clamp-2">
+                        <p className="text-gray-600 dark:text-gray-300 line-clamp-3">
                             <TextHighlight text={entry.content} query={query} />
                         </p>
                     </Link>
