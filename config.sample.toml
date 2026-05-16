@@ -1,0 +1,23 @@
+# Sample configuration for the diary app
+# Copy this content to /data/config.toml at runtime (via a mounted volume),
+# then edit values as needed. The container uses ENV DIARY_CONFIG=/data/config.toml
+# by default.
+
+[server]
+# Listen address inside container; Dockerfile exposes 8080
+address = ":8080"
+
+[auth]
+# Set a strong token here (or override by env DIARY_LOGIN_TOKEN)
+# Example: "change-me-please-123456"
+token = ""
+
+[database]
+# The app will look for diary.db in the working dir (/app). The Dockerfile creates
+# a symlink /app/diary.db -> /data/diary.db so data persists in the mounted volume.
+path = "/data/diary.db"
+
+[ui]
+# Optional avatar image URL and display username in the top-right menu
+avatar_url = ""
+username   = ""

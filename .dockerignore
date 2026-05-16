@@ -1,0 +1,16 @@
+.git
+.gitignore
+.dockerignore
+.vscode/
+.venv/
+.idea/
+bin/
+build/
+*.exe
+*.db
+*.log
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
