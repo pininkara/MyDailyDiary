@@ -8,6 +8,11 @@ export default function Settings() {
     const [username, setUsername] = useState('');
     const [avatarUrl, setAvatarUrl] = useState('');
     const [token, setToken] = useState('');
+    const [llmEnabled, setLlmEnabled] = useState(false);
+    const [llmBaseUrl, setLlmBaseUrl] = useState('');
+    const [llmApiKey, setLlmApiKey] = useState('');
+    const [llmModel, setLlmModel] = useState('');
+    const [llmPrompt, setLlmPrompt] = useState('');
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -22,6 +27,11 @@ export default function Settings() {
             setUsername(res.data.username || '');
             setAvatarUrl(res.data.avatar_url || '');
             setToken(res.data.token_mask || '');
+            setLlmEnabled(!!res.data.llm_enabled);
+            setLlmBaseUrl(res.data.llm_base_url || '');
+            setLlmApiKey(res.data.llm_key_mask || '');
+            setLlmModel(res.data.llm_model || '');
+            setLlmPrompt(res.data.llm_prompt || '');
         } catch (err) {
             console.error(err);
         }
@@ -36,6 +46,11 @@ export default function Settings() {
                 username,
                 avatar_url: avatarUrl,
                 token: token.includes('*') ? '' : token, // Only send if changed (not masked)
+                llm_enabled: llmEnabled,
+                llm_base_url: llmBaseUrl,
+                llm_api_key: llmApiKey.includes('*') ? '' : llmApiKey,
+                llm_model: llmModel,
+                llm_prompt: llmPrompt,
             });
             setMessage('Settings saved successfully');
             await checkAuth();
@@ -117,6 +132,67 @@ export default function Settings() {
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm p-2 border"
                         />
                         <p className="mt-1 text-xs text-gray-500">Leave masked to keep current token.</p>
+                    </div>
+
+                    <div className="border-t border-gray-200 dark:border-gray-700 pt-6 space-y-4">
+                        <div className="flex items-center justify-between gap-4">
+                            <div>
+                                <h3 className="text-lg font-medium text-gray-900 dark:text-white">LLM Summary</h3>
+                                <p className="text-xs text-gray-500">Auto-generate titles when the title is empty or still auto-generated.</p>
+                            </div>
+                            <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                                <input
+                                    type="checkbox"
+                                    checked={llmEnabled}
+                                    onChange={(e) => setLlmEnabled(e.target.checked)}
+                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                Enabled
+                            </label>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Base URL</label>
+                            <input
+                                type="text"
+                                value={llmBaseUrl}
+                                onChange={(e) => setLlmBaseUrl(e.target.value)}
+                                placeholder="https://api.openai.com/v1"
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm p-2 border"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">API Key</label>
+                            <input
+                                type="password"
+                                value={llmApiKey}
+                                onChange={(e) => setLlmApiKey(e.target.value)}
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm p-2 border"
+                            />
+                            <p className="mt-1 text-xs text-gray-500">Leave masked to keep current key.</p>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Model</label>
+                            <input
+                                type="text"
+                                value={llmModel}
+                                onChange={(e) => setLlmModel(e.target.value)}
+                                placeholder="gpt-4o-mini"
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm p-2 border"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Prompt</label>
+                            <textarea
+                                value={llmPrompt}
+                                onChange={(e) => setLlmPrompt(e.target.value)}
+                                rows={4}
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm p-2 border"
+                            />
+                        </div>
                     </div>
                 </div>
 

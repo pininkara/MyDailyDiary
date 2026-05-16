@@ -21,3 +21,13 @@ path = "/data/diary.db"
 # Optional avatar image URL and display username in the top-right menu
 avatar_url = ""
 username   = ""
+
+[llm]
+# Enable automatic title generation for entries whose title was not manually edited.
+enabled = false
+# OpenAI-compatible base URL; the app calls {base_url}/responses.
+# Example: "https://api.openai.com/v1"
+base_url = ""
+api_key = ""
+model = ""
+prompt = "请为下面这篇日记生成一个简短标题，只返回标题，不要解释。"

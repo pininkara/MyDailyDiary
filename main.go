@@ -37,6 +37,7 @@ type Entry struct {
 	EditCount int       `json:"edit_count"`
 	Mood      int       `json:"mood"`
 	Fulfill   int       `json:"fulfillment"`
+	AutoTitle bool      `json:"auto_title"`
 }
 
 func main() {
@@ -275,29 +276,43 @@ func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 	req.Content = strings.TrimSpace(req.Content)
 	req.Title = strings.TrimSpace(req.Title)
 
-	if req.Title == "" {
-		// auto title
-		rn := []rune(req.Content)
-		max := 16
-		if len(rn) < max {
-			max = len(rn)
-		}
-		if max > 0 {
-			req.Title = string(rn[:max])
-		} else {
-			req.Title = req.Date
-		}
-	}
-
 	if len(req.Date) != 10 {
 		http.Error(w, "Invalid date", http.StatusBadRequest)
 		return
 	}
 
+	existing, err := a.getEntryByDate(req.Date)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	req.Mood = normalizeRating(req.Mood)
 	req.Fulfill = normalizeRating(req.Fulfill)
 
-	if err := a.upsertByDateWithUpdated(req.Date, req.Title, req.Content, req.Mood, req.Fulfill, nil); err != nil {
+	contentChanged := existing == nil || req.Content != existing.Content
+	titleChanged := false
+	if existing != nil {
+		titleChanged = req.Title != existing.Title
+	} else {
+		titleChanged = req.Title != ""
+	}
+	autoTitle := existing != nil && existing.AutoTitle
+	shouldGenerateTitle := false
+	contentForTitle := req.Content
+	dateForTitle := req.Date
+
+	if existing == nil && req.Title == "" {
+		req.Title = fallbackTitle(req.Content, req.Date)
+		autoTitle = true
+		shouldGenerateTitle = strings.TrimSpace(req.Content) != ""
+	} else if existing != nil && titleChanged {
+		autoTitle = false
+	} else if existing != nil && contentChanged && existing.AutoTitle {
+		autoTitle = true
+		shouldGenerateTitle = strings.TrimSpace(req.Content) != ""
+	}
+
+	if err := a.upsertByDateWithUpdated(req.Date, req.Title, req.Content, req.Mood, req.Fulfill, autoTitle, contentChanged, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -311,9 +326,13 @@ func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(entry)
+
+	if shouldGenerateTitle {
+		go a.generateTitleInBackground(dateForTitle, contentForTitle)
+	}
 }
 
 func (a *App) apiSearch(w http.ResponseWriter, r *http.Request) {
@@ -357,15 +376,25 @@ func (a *App) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 		"avatar_url": a.Cfg.UI.AvatarURL,
 		// Don't send token back for security, or send masked if needed?
 		// Original sent masked.
-		"token_mask": maskToken(a.Cfg.Auth.Token),
+		"token_mask":   maskToken(a.Cfg.Auth.Token),
+		"llm_enabled":  a.Cfg.LLM.Enabled,
+		"llm_base_url": a.Cfg.LLM.BaseURL,
+		"llm_model":    a.Cfg.LLM.Model,
+		"llm_prompt":   a.Cfg.LLM.Prompt,
+		"llm_key_mask": maskToken(a.Cfg.LLM.APIKey),
 	})
 }
 
 func (a *App) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username  string `json:"username"`
-		AvatarURL string `json:"avatar_url"`
-		Token     string `json:"token"`
+		Username   string `json:"username"`
+		AvatarURL  string `json:"avatar_url"`
+		Token      string `json:"token"`
+		LLMEnabled bool   `json:"llm_enabled"`
+		LLMBaseURL string `json:"llm_base_url"`
+		LLMAPIKey  string `json:"llm_api_key"`
+		LLMModel   string `json:"llm_model"`
+		LLMPrompt  string `json:"llm_prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -379,6 +408,15 @@ func (a *App) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if newToken != "" {
 		a.Cfg.Auth.Token = newToken
 		a.Token = newToken
+	}
+
+	a.Cfg.LLM.Enabled = req.LLMEnabled
+	a.Cfg.LLM.BaseURL = strings.TrimSpace(req.LLMBaseURL)
+	a.Cfg.LLM.Model = strings.TrimSpace(req.LLMModel)
+	a.Cfg.LLM.Prompt = strings.TrimSpace(req.LLMPrompt)
+	newLLMKey := strings.TrimSpace(req.LLMAPIKey)
+	if newLLMKey != "" {
+		a.Cfg.LLM.APIKey = newLLMKey
 	}
 
 	if err := saveConfig(a.ConfigPath, a.Cfg); err != nil {
@@ -485,7 +523,7 @@ func (a *App) apiImport(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if err := a.upsertByDateWithUpdated(dateStr, title, content, 3, 3, updPtr); err == nil {
+		if err := a.upsertByDateWithUpdated(dateStr, title, content, 3, 3, false, true, updPtr); err == nil {
 			count++
 		}
 	}
@@ -526,6 +564,145 @@ func normalizeRating(v int) int {
 		return 3
 	}
 	return v
+}
+
+func fallbackTitle(content, date string) string {
+	rn := []rune(strings.TrimSpace(content))
+	max := 16
+	if len(rn) < max {
+		max = len(rn)
+	}
+	if max > 0 {
+		return string(rn[:max])
+	}
+	return date
+}
+
+func (a *App) generateTitle(content, date string) string {
+	fallback := fallbackTitle(content, date)
+	if strings.TrimSpace(content) == "" || !a.Cfg.LLM.Enabled {
+		return fallback
+	}
+	title, err := a.summarizeTitleWithLLM(content)
+	if err != nil {
+		log.Printf("[WARN] llm title failed: %v", err)
+		return fallback
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return fallback
+	}
+	rn := []rune(title)
+	if len(rn) > 40 {
+		title = string(rn[:40])
+	}
+	return title
+}
+
+func (a *App) generateTitleInBackground(dateStr, content string) {
+	if strings.TrimSpace(content) == "" || !a.Cfg.LLM.Enabled {
+		return
+	}
+	title, err := a.summarizeTitleWithLLM(content)
+	if err != nil {
+		log.Printf("[WARN] background llm title failed: %v", err)
+		return
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return
+	}
+	rn := []rune(title)
+	if len(rn) > 40 {
+		title = string(rn[:40])
+	}
+	res, err := a.DB.Exec(`
+		UPDATE entries
+		SET title=?, updated_at=?
+		WHERE day=? AND content=? AND auto_title=1
+	`, title, time.Now().UTC(), dateStr, content)
+	if err != nil {
+		log.Printf("[WARN] background title update failed: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		log.Printf("[INFO] background title skipped for %s: entry changed or title became manual", dateStr)
+	}
+}
+
+func (a *App) summarizeTitleWithLLM(content string) (string, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(a.Cfg.LLM.BaseURL), "/")
+	apiKey := strings.TrimSpace(a.Cfg.LLM.APIKey)
+	model := strings.TrimSpace(a.Cfg.LLM.Model)
+	if baseURL == "" || apiKey == "" || model == "" {
+		return "", fmt.Errorf("llm config incomplete")
+	}
+	prompt := strings.TrimSpace(a.Cfg.LLM.Prompt)
+	if prompt == "" {
+		prompt = "请为下面这篇日记生成一个简短标题，只返回标题，不要解释。"
+	}
+
+	endpoint := baseURL
+	if !strings.HasSuffix(endpoint, "/responses") {
+		endpoint += "/responses"
+	}
+	body := map[string]any{
+		"model":             model,
+		"instructions":      prompt,
+		"input":             content,
+		"temperature":       0.3,
+		"max_output_tokens": 64,
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(string(b)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(data))
+	}
+	var out struct {
+		OutputText string `json:"output_text"`
+		Output     []struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	text := strings.TrimSpace(out.OutputText)
+	if text == "" {
+		for _, item := range out.Output {
+			for _, c := range item.Content {
+				if c.Text != "" {
+					text = strings.TrimSpace(c.Text)
+					break
+				}
+			}
+			if text != "" {
+				break
+			}
+		}
+	}
+	if text == "" {
+		return "", fmt.Errorf("llm returned no text")
+	}
+	return strings.Trim(text, " \t\r\n\"'“”‘’#：:"), nil
 }
 
 func startOfWeekMonday(t time.Time) time.Time {
@@ -608,7 +785,8 @@ func migrate(db *sql.DB) error {
 			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
 			edit_count INTEGER NOT NULL DEFAULT 0,
 			mood INTEGER NOT NULL DEFAULT 3,
-			fulfillment INTEGER NOT NULL DEFAULT 3
+			fulfillment INTEGER NOT NULL DEFAULT 3,
+			auto_title INTEGER NOT NULL DEFAULT 0
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);`,
 	}
@@ -637,6 +815,11 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("add fulfillment column: %w", err)
 		}
 	}
+	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN auto_title INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("add auto_title column: %w", err)
+		}
+	}
 	if _, err := db.Exec(`UPDATE entries SET day = DATE(created_at,'localtime') WHERE day IS NULL OR day=''`); err != nil {
 		return fmt.Errorf("backfill day: %w", err)
 	}
@@ -663,6 +846,13 @@ type Config struct {
 		AvatarURL string `toml:"avatar_url"`
 		Username  string `toml:"username"`
 	} `toml:"ui"`
+	LLM struct {
+		Enabled bool   `toml:"enabled"`
+		BaseURL string `toml:"base_url"`
+		APIKey  string `toml:"api_key"`
+		Model   string `toml:"model"`
+		Prompt  string `toml:"prompt"`
+	} `toml:"llm"`
 }
 
 func loadConfig(path string) *Config {
@@ -672,6 +862,11 @@ func loadConfig(path string) *Config {
 	cfg.Database.Path = "data/diary.db"
 	cfg.UI.AvatarURL = ""
 	cfg.UI.Username = ""
+	cfg.LLM.Enabled = false
+	cfg.LLM.BaseURL = ""
+	cfg.LLM.APIKey = ""
+	cfg.LLM.Model = ""
+	cfg.LLM.Prompt = "请为下面这篇日记生成一个简短标题，只返回标题，不要解释。"
 
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -703,7 +898,7 @@ func maskToken(tok string) string {
 }
 
 func (a *App) listAllEntries() ([]*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment FROM entries ORDER BY created_at ASC`)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title FROM entries ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -712,7 +907,7 @@ func (a *App) listAllEntries() ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -722,7 +917,7 @@ func (a *App) listAllEntries() ([]*Entry, error) {
 	return list, nil
 }
 
-func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulfill int, updatedAt *time.Time) error {
+func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulfill int, autoTitle, contentChanged bool, updatedAt *time.Time) error {
 	if len(dateStr) != 10 {
 		return fmt.Errorf("bad date")
 	}
@@ -734,24 +929,32 @@ func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulf
 	fulfill = normalizeRating(fulfill)
 	createdUTC := dayLocal.UTC()
 	existing, _ := a.getEntryByDate(dateStr)
+	autoTitleInt := 0
+	if autoTitle {
+		autoTitleInt = 1
+	}
 	if existing == nil {
 		upd := time.Now().UTC()
 		if updatedAt != nil {
 			upd = updatedAt.UTC()
 		}
-		_, err = a.DB.Exec(`INSERT INTO entries(day, title, content, created_at, updated_at, edit_count, mood, fulfillment) VALUES(?,?,?,?,?,?,?,?)`, dateStr, title, content, createdUTC, upd, 1, mood, fulfill)
+		_, err = a.DB.Exec(`INSERT INTO entries(day, title, content, created_at, updated_at, edit_count, mood, fulfillment, auto_title) VALUES(?,?,?,?,?,?,?,?,?)`, dateStr, title, content, createdUTC, upd, 1, mood, fulfill, autoTitleInt)
 		return err
 	}
 	upd := time.Now().UTC()
 	if updatedAt != nil {
 		upd = updatedAt.UTC()
 	}
-	_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, edit_count=edit_count+1, mood=?, fulfillment=? WHERE id=?`, title, content, upd, mood, fulfill, existing.ID)
+	if contentChanged {
+		_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, edit_count=edit_count+1, mood=?, fulfillment=?, auto_title=? WHERE id=?`, title, content, upd, mood, fulfill, autoTitleInt, existing.ID)
+		return err
+	}
+	_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, mood=?, fulfillment=?, auto_title=? WHERE id=?`, title, content, upd, mood, fulfill, autoTitleInt, existing.ID)
 	return err
 }
 
 func (a *App) getEntryByDate(date string) (*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment FROM entries WHERE day=? LIMIT 1`, date)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title FROM entries WHERE day=? LIMIT 1`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -759,7 +962,7 @@ func (a *App) getEntryByDate(date string) (*Entry, error) {
 	if rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -770,7 +973,7 @@ func (a *App) getEntryByDate(date string) (*Entry, error) {
 }
 
 func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment FROM entries ORDER BY day DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title FROM entries ORDER BY day DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -779,7 +982,7 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -792,7 +995,7 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	like := "%" + q + "%"
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title
 		FROM entries
 		WHERE title LIKE ? OR content LIKE ?
 		ORDER BY day DESC
@@ -806,7 +1009,7 @@ func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -818,7 +1021,7 @@ func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 
 func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entry, error) {
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title
 		FROM entries
 		WHERE day >= ? AND day < ?
 		ORDER BY day DESC
@@ -832,7 +1035,7 @@ func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entr
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -844,7 +1047,7 @@ func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entr
 
 func (a *App) listEntriesByRangeAll(from, to time.Time) ([]*Entry, error) {
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title
 		FROM entries
 		WHERE day >= ? AND day < ?
 		ORDER BY day ASC
@@ -857,7 +1060,7 @@ func (a *App) listEntriesByRangeAll(from, to time.Time) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
