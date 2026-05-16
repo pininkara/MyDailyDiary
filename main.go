@@ -107,10 +107,17 @@ func main() {
 	}))
 
 	addr := cfg.Server.Address
-	log.Printf("Server listening on http://localhost%s\n", addr)
+	log.Printf("Server listening on %s\n", listenURL(addr))
 	if err := http.ListenAndServe(addr, withCommonHeaders(mux)); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+func listenURL(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		return "http://0.0.0.0" + addr
+	}
+	return "http://" + addr
 }
 
 func withCommonHeaders(next http.Handler) http.Handler {
