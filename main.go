@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,12 +27,13 @@ type App struct {
 }
 
 type Entry struct {
-	ID      int64     `json:"id"`
-	Title   string    `json:"title"`
-	Content string    `json:"content"`
-	Created time.Time `json:"created_at"`
-	Updated time.Time `json:"updated_at"`
-	Day     string    `json:"day"` // calendar day YYYY-MM-DD
+	ID        int64     `json:"id"`
+	Title     string    `json:"title"`
+	Content   string    `json:"content"`
+	Created   time.Time `json:"created_at"`
+	Updated   time.Time `json:"updated_at"`
+	Day       string    `json:"day"` // calendar day YYYY-MM-DD
+	EditCount int       `json:"edit_count"`
 }
 
 func main() {
@@ -194,8 +194,27 @@ func (a *App) apiListEntries(w http.ResponseWriter, r *http.Request) {
 	if offset < 0 {
 		offset = 0
 	}
+	fromStr := strings.TrimSpace(r.URL.Query().Get("from"))
+	toStr := strings.TrimSpace(r.URL.Query().Get("to"))
 
-	entries, err := a.listEntries(offset, limit)
+	var entries []*Entry
+	var err error
+	if fromStr != "" || toStr != "" {
+		if fromStr == "" || toStr == "" {
+			http.Error(w, "from/to required", http.StatusBadRequest)
+			return
+		}
+		from, errFrom := parseDateOnly(fromStr)
+		to, errTo := parseDateOnly(toStr)
+		if errFrom != nil || errTo != nil || to.Before(from) {
+			http.Error(w, "Invalid date range", http.StatusBadRequest)
+			return
+		}
+		toExclusive := to.AddDate(0, 0, 1)
+		entries, err = a.listEntriesByRange(from, toExclusive, offset, limit)
+	} else {
+		entries, err = a.listEntries(offset, limit)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -273,9 +292,19 @@ func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	entry, err := a.getEntryByDate(req.Date)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if entry == nil {
+		http.Error(w, "Entry not found", http.StatusNotFound)
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entry)
 }
 
 func (a *App) apiSearch(w http.ResponseWriter, r *http.Request) {
@@ -289,21 +318,6 @@ func (a *App) apiSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	// Date matching logic from original
-	if from, to, ok := dateRangeFromQuery(q); ok {
-		dr, _ := a.listEntriesByRange(from, to, 200)
-		seen := map[int64]struct{}{}
-		for _, e := range results {
-			seen[e.ID] = struct{}{}
-		}
-		for _, e := range dr {
-			if _, ok := seen[e.ID]; !ok {
-				results = append(results, e)
-				seen[e.ID] = struct{}{}
-			}
-		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -468,6 +482,13 @@ func makeSnippet(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
+func parseDateOnly(s string) (time.Time, error) {
+	if len(s) != 10 {
+		return time.Time{}, fmt.Errorf("bad date")
+	}
+	return time.ParseInLocation("2006-01-02", s, time.Local)
+}
+
 func subtleEqual(a, b string) bool {
 	if len(a) != len(b) {
 		return false
@@ -499,7 +520,8 @@ func migrate(db *sql.DB) error {
 			title TEXT NOT NULL DEFAULT '',
 			content TEXT NOT NULL DEFAULT '',
 			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			edit_count INTEGER NOT NULL DEFAULT 0
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);`,
 	}
@@ -511,6 +533,11 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN day TEXT`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("add day column: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("add edit_count column: %w", err)
 		}
 	}
 	if _, err := db.Exec(`UPDATE entries SET day = DATE(created_at,'localtime') WHERE day IS NULL OR day=''`); err != nil {
@@ -579,7 +606,7 @@ func maskToken(tok string) string {
 }
 
 func (a *App) listAllEntries() ([]*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day FROM entries ORDER BY created_at ASC`)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count FROM entries ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -588,7 +615,7 @@ func (a *App) listAllEntries() ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -609,23 +636,23 @@ func (a *App) upsertByDateWithUpdated(dateStr, title, content string, updatedAt 
 	createdUTC := dayLocal.UTC()
 	existing, _ := a.getEntryByDate(dateStr)
 	if existing == nil {
-		upd := createdUTC
+		upd := time.Now().UTC()
 		if updatedAt != nil {
 			upd = updatedAt.UTC()
 		}
-		_, err = a.DB.Exec(`INSERT INTO entries(day, title, content, created_at, updated_at) VALUES(?,?,?,?,?)`, dateStr, title, content, createdUTC, upd)
+		_, err = a.DB.Exec(`INSERT INTO entries(day, title, content, created_at, updated_at, edit_count) VALUES(?,?,?,?,?,?)`, dateStr, title, content, createdUTC, upd, 1)
 		return err
 	}
 	upd := time.Now().UTC()
 	if updatedAt != nil {
 		upd = updatedAt.UTC()
 	}
-	_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=? WHERE id=?`, title, content, upd, existing.ID)
+	_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, edit_count=edit_count+1 WHERE id=?`, title, content, upd, existing.ID)
 	return err
 }
 
 func (a *App) getEntryByDate(date string) (*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day FROM entries WHERE day=? LIMIT 1`, date)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count FROM entries WHERE day=? LIMIT 1`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +660,7 @@ func (a *App) getEntryByDate(date string) (*Entry, error) {
 	if rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -644,7 +671,7 @@ func (a *App) getEntryByDate(date string) (*Entry, error) {
 }
 
 func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day FROM entries ORDER BY day DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count FROM entries ORDER BY day DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -653,7 +680,7 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -666,7 +693,7 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	like := "%" + q + "%"
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day
+		SELECT id, title, content, created_at, updated_at, day, edit_count
 		FROM entries
 		WHERE title LIKE ? OR content LIKE ?
 		ORDER BY day DESC
@@ -680,7 +707,7 @@ func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -690,14 +717,14 @@ func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	return list, nil
 }
 
-func (a *App) listEntriesByRange(from, to time.Time, limit int) ([]*Entry, error) {
+func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entry, error) {
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day
+		SELECT id, title, content, created_at, updated_at, day, edit_count
 		FROM entries
 		WHERE day >= ? AND day < ?
 		ORDER BY day DESC
-		LIMIT ?
-	`, from.Format("2006-01-02"), to.Format("2006-01-02"), limit)
+		LIMIT ? OFFSET ?
+	`, from.Format("2006-01-02"), to.Format("2006-01-02"), limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +733,7 @@ func (a *App) listEntriesByRange(from, to time.Time, limit int) ([]*Entry, error
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
@@ -714,70 +741,4 @@ func (a *App) listEntriesByRange(from, to time.Time, limit int) ([]*Entry, error
 		list = append(list, &e)
 	}
 	return list, nil
-}
-
-func dateRangeFromQuery(q string) (time.Time, time.Time, bool) {
-	s := strings.TrimSpace(q)
-	if s == "" {
-		return time.Time{}, time.Time{}, false
-	}
-	reCn := regexp.MustCompile(`^\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*$`)
-	if m := reCn.FindStringSubmatch(s); m != nil {
-		y := atoi(m[1])
-		mo := atoi(m[2])
-		d := atoi(m[3])
-		from := time.Date(y, time.Month(mo), d, 0, 0, 0, 0, time.Local)
-		to := from.AddDate(0, 0, 1)
-		return from, to, true
-	}
-	reDash := regexp.MustCompile(`^\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*$`)
-	if m := reDash.FindStringSubmatch(s); m != nil {
-		y := atoi(m[1])
-		mo := atoi(m[2])
-		d := atoi(m[3])
-		from := time.Date(y, time.Month(mo), d, 0, 0, 0, 0, time.Local)
-		to := from.AddDate(0, 0, 1)
-		return from, to, true
-	}
-	re8 := regexp.MustCompile(`^\s*(\d{4})(\d{2})(\d{2})\s*$`)
-	if m := re8.FindStringSubmatch(s); m != nil {
-		y := atoi(m[1])
-		mo := atoi(m[2])
-		d := atoi(m[3])
-		from := time.Date(y, time.Month(mo), d, 0, 0, 0, 0, time.Local)
-		to := from.AddDate(0, 0, 1)
-		return from, to, true
-	}
-	reMonth := regexp.MustCompile(`^\s*(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*$`)
-	if m := reMonth.FindStringSubmatch(s); m != nil {
-		year := time.Now().Year()
-		if m[1] != "" {
-			year = atoi(m[1])
-		}
-		mo := atoi(m[2])
-		from := time.Date(year, time.Month(mo), 1, 0, 0, 0, 0, time.Local)
-		to := from.AddDate(0, 1, 0)
-		return from, to, true
-	}
-	reYear := regexp.MustCompile(`^\s*(\d{4})\s*年?\s*$`)
-	if m := reYear.FindStringSubmatch(s); m != nil {
-		year := atoi(m[1])
-		from := time.Date(year, 1, 1, 0, 0, 0, 0, time.Local)
-		to := from.AddDate(1, 0, 0)
-		return from, to, true
-	}
-	reDay := regexp.MustCompile(`^\s*(\d{1,2})\s*日\s*$`)
-	if m := reDay.FindStringSubmatch(s); m != nil {
-		now := time.Now()
-		d := atoi(m[1])
-		from := time.Date(now.Year(), now.Month(), d, 0, 0, 0, 0, time.Local)
-		to := from.AddDate(0, 0, 1)
-		return from, to, true
-	}
-	return time.Time{}, time.Time{}, false
-}
-
-func atoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
 }

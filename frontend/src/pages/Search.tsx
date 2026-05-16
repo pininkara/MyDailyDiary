@@ -52,7 +52,7 @@ export default function Search() {
                 <input
                     type="text"
                     className="block w-full pl-10 pr-3 py-4 border border-gray-300 dark:border-gray-700 rounded-xl leading-5 bg-white dark:bg-gray-800 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm dark:text-white"
-                    placeholder="Search entries by text or date (YYYY-MM-DD)..."
+                    placeholder="Search entries by text..."
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                 />

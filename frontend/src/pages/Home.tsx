@@ -10,6 +10,7 @@ interface Entry {
     content: string;
     day: string;
     updated_at: string;
+    edit_count: number;
 }
 
 export default function Home() {
@@ -29,6 +30,7 @@ export default function Home() {
     const [saving, setSaving] = useState(false);
     const [loading, setLoading] = useState(false);
     const [lastSaved, setLastSaved] = useState<Date | null>(null);
+    const [editCount, setEditCount] = useState(0);
 
     const dateStr = format(date, 'yyyy-MM-dd');
 
@@ -45,16 +47,19 @@ export default function Home() {
                 setContent(res.data.content || '');
                 setTitle(res.data.title || '');
                 setLastSaved(res.data.updated_at ? parseISO(res.data.updated_at) : null);
+                setEditCount(res.data.edit_count || 0);
             } else {
                 setContent('');
                 setTitle('');
                 setLastSaved(null);
+                setEditCount(0);
             }
         } catch (err: any) {
             if (err.response?.status === 404) {
                 setContent('');
                 setTitle('');
                 setLastSaved(null);
+                setEditCount(0);
             }
         } finally {
             setLoading(false);
@@ -64,12 +69,17 @@ export default function Home() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            await api.post('/entries', {
+            const res = await api.post('/entries', {
                 date: dateStr,
                 content,
                 title,
             });
-            setLastSaved(new Date());
+            if (res.data) {
+                setLastSaved(res.data.updated_at ? parseISO(res.data.updated_at) : new Date());
+                setEditCount(res.data.edit_count || 0);
+            } else {
+                setLastSaved(new Date());
+            }
         } catch (err) {
             console.error('Failed to save', err);
         } finally {
@@ -122,6 +132,7 @@ export default function Home() {
                 </div>
 
                 <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-400">Edits {editCount}</span>
                     {lastSaved && (
                         <span className="text-xs text-gray-400">
                             Saved {format(lastSaved, 'HH:mm')}
