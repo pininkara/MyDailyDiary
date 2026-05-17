@@ -4,6 +4,64 @@ import { format, addDays, subDays, parseISO } from 'date-fns';
 import { ChevronLeft, ChevronRight, Save } from 'lucide-react';
 import api from '../lib/api';
 
+const ratingLabels = [1, 2, 3, 4, 5];
+
+function RatingControl({
+    label,
+    value,
+    onChange,
+    leftEmoji,
+    rightEmoji,
+}: {
+    label: string;
+    value: number;
+    onChange: (value: number) => void;
+    leftEmoji: string;
+    rightEmoji: string;
+}) {
+    return (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{label}</span>
+                <span className="text-xs text-gray-400">{value}/5</span>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+                <span className="shrink-0 select-none text-lg leading-none">{leftEmoji}</span>
+                <div className="relative flex-1 rounded-xl bg-gray-100 dark:bg-gray-700 p-1 overflow-hidden h-14">
+                    <div className="absolute inset-1 grid grid-cols-5 gap-1 pointer-events-none">
+                        {ratingLabels.map((rating) => {
+                            const active = value === rating;
+                            return (
+                                <div
+                                    key={rating}
+                                    className={`flex items-center justify-center rounded-lg text-sm font-semibold transition-all ${
+                                        active
+                                            ? 'bg-white dark:bg-gray-800 text-indigo-600 shadow-sm ring-1 ring-black/5 dark:ring-white/10'
+                                            : 'text-gray-500 dark:text-gray-300'
+                                    }`}
+                                >
+                                    {rating}
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <input
+                        type="range"
+                        min={1}
+                        max={5}
+                        step={1}
+                        value={value}
+                        onChange={(e) => onChange(Number(e.target.value))}
+                        aria-label={label}
+                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 touch-none"
+                    />
+                </div>
+                <span className="shrink-0 select-none text-lg leading-none">{rightEmoji}</span>
+            </div>
+        </div>
+    );
+}
+
 export default function Home() {
     const [searchParams, setSearchParams] = useSearchParams();
     const [date, setDate] = useState(() => {
@@ -154,42 +212,14 @@ export default function Home() {
 
             {/* Mood & Fulfillment */}
             <div className="grid md:grid-cols-2 gap-4">
-                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-                    <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Mood</span>
-                        <span className="text-xs text-gray-400">{mood}/5</span>
-                    </div>
-                    <div className="mt-3 flex items-center gap-3">
-                        <span className="text-lg">😭</span>
-                        <input
-                            type="range"
-                            min={1}
-                            max={5}
-                            value={mood}
-                            onChange={(e) => setMood(Number(e.target.value))}
-                            className="flex-1"
-                        />
-                        <span className="text-lg">🥰</span>
-                    </div>
-                </div>
-                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-                    <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Fulfillment</span>
-                        <span className="text-xs text-gray-400">{fulfillment}/5</span>
-                    </div>
-                    <div className="mt-3 flex items-center gap-3">
-                        <span className="text-lg">😴</span>
-                        <input
-                            type="range"
-                            min={1}
-                            max={5}
-                            value={fulfillment}
-                            onChange={(e) => setFulfillment(Number(e.target.value))}
-                            className="flex-1"
-                        />
-                        <span className="text-lg">💪</span>
-                    </div>
-                </div>
+                <RatingControl label="Mood" value={mood} onChange={setMood} leftEmoji="😭" rightEmoji="🥰" />
+                <RatingControl
+                    label="Fulfillment"
+                    value={fulfillment}
+                    onChange={setFulfillment}
+                    leftEmoji="😴"
+                    rightEmoji="💪"
+                />
             </div>
 
             {/* Editor */}
