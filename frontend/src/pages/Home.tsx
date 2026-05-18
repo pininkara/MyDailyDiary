@@ -3,6 +3,15 @@ import { useSearchParams } from 'react-router-dom';
 import { format, addDays, subDays, parseISO } from 'date-fns';
 import { ChevronLeft, ChevronRight, Save } from 'lucide-react';
 import api from '../lib/api';
+import {
+    ambientWeatherOptions,
+    baseWeatherOptions,
+    cn,
+    isAmbientWeatherValue,
+    isBaseWeatherValue,
+    type AmbientWeatherValue,
+    type BaseWeatherValue,
+} from '../lib/utils';
 
 const ratingLabels = [1, 2, 3, 4, 5];
 
@@ -62,6 +71,89 @@ function RatingControl({
     );
 }
 
+function BaseWeatherControl({
+    value,
+    onChange,
+}: {
+    value: BaseWeatherValue | '';
+    onChange: (value: BaseWeatherValue) => void;
+}) {
+    return (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Base Weather</span>
+                <span className="text-xs text-gray-400">1/1</span>
+            </div>
+            <div className="mt-3 rounded-xl bg-gray-100 dark:bg-gray-700 p-1">
+                <div className="grid grid-cols-7 gap-1">
+                    {baseWeatherOptions.map((option) => {
+                        const active = value === option.value;
+                        return (
+                            <button
+                                key={option.value}
+                                type="button"
+                                aria-label={option.label}
+                                aria-pressed={active}
+                                onClick={() => onChange(option.value)}
+                                className={cn(
+                                    'flex h-14 w-full items-center justify-center rounded-lg text-xl transition-all',
+                                    active
+                                        ? 'bg-white dark:bg-gray-800 shadow-sm ring-1 ring-black/5 dark:ring-white/10'
+                                        : 'text-gray-500 hover:bg-white/70 dark:text-gray-300 dark:hover:bg-gray-600'
+                                )}
+                            >
+                                {option.emoji}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function AmbientWeatherControl({
+    values,
+    onToggle,
+}: {
+    values: AmbientWeatherValue[];
+    onToggle: (value: AmbientWeatherValue) => void;
+}) {
+    return (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Ambient Weather</span>
+                <span className="text-xs text-gray-400">{values.length}/{ambientWeatherOptions.length}</span>
+            </div>
+            <div className="mt-3 grid grid-cols-6 gap-2 rounded-xl bg-gray-100 dark:bg-gray-700 p-2">
+                {ambientWeatherOptions.map((option) => {
+                    const active = values.includes(option.value);
+                    return (
+                        <button
+                            key={option.value}
+                            type="button"
+                            aria-label={option.label}
+                            aria-pressed={active}
+                            onClick={() => onToggle(option.value)}
+                            className={cn(
+                                'flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 transition-all',
+                                active
+                                    ? 'bg-white dark:bg-gray-800 shadow-sm ring-1 ring-black/5 dark:ring-white/10'
+                                    : 'text-gray-500 hover:bg-white/70 dark:text-gray-300 dark:hover:bg-gray-600'
+                            )}
+                        >
+                            <span className="text-xl leading-none">{option.emoji}</span>
+                            <span className="text-[11px] leading-none text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                                {option.label}
+                            </span>
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 export default function Home() {
     const [searchParams, setSearchParams] = useSearchParams();
     const [date, setDate] = useState(() => {
@@ -82,6 +174,8 @@ export default function Home() {
     const [editCount, setEditCount] = useState(0);
     const [mood, setMood] = useState(3);
     const [fulfillment, setFulfillment] = useState(3);
+    const [baseWeather, setBaseWeather] = useState<BaseWeatherValue | ''>('');
+    const [ambientWeathers, setAmbientWeathers] = useState<AmbientWeatherValue[]>([]);
 
     const dateStr = format(date, 'yyyy-MM-dd');
 
@@ -101,6 +195,12 @@ export default function Home() {
                 setEditCount(res.data.edit_count || 0);
                 setMood(res.data.mood ?? 0);
                 setFulfillment(res.data.fulfillment ?? 0);
+                setBaseWeather(isBaseWeatherValue(res.data.base_weather) ? res.data.base_weather : '');
+                setAmbientWeathers(
+                    Array.isArray(res.data.ambient_weathers)
+                        ? res.data.ambient_weathers.filter(isAmbientWeatherValue)
+                        : []
+                );
             } else {
                 setContent('');
                 setTitle('');
@@ -108,6 +208,8 @@ export default function Home() {
                 setEditCount(0);
                 setMood(3);
                 setFulfillment(3);
+                setBaseWeather('');
+                setAmbientWeathers([]);
             }
         } catch (err: any) {
             if (err.response?.status === 404) {
@@ -117,6 +219,8 @@ export default function Home() {
                 setEditCount(0);
                 setMood(3);
                 setFulfillment(3);
+                setBaseWeather('');
+                setAmbientWeathers([]);
             }
         } finally {
             setLoading(false);
@@ -132,12 +236,20 @@ export default function Home() {
                 title,
                 mood,
                 fulfillment,
+                base_weather: baseWeather,
+                ambient_weathers: ambientWeathers,
             });
             if (res.data) {
                 setLastSaved(res.data.updated_at ? parseISO(res.data.updated_at) : new Date());
                 setEditCount(res.data.edit_count || 0);
                 setMood(res.data.mood ?? mood);
                 setFulfillment(res.data.fulfillment ?? fulfillment);
+                setBaseWeather(isBaseWeatherValue(res.data.base_weather) ? res.data.base_weather : '');
+                setAmbientWeathers(
+                    Array.isArray(res.data.ambient_weathers)
+                        ? res.data.ambient_weathers.filter(isAmbientWeatherValue)
+                        : []
+                );
             } else {
                 setLastSaved(new Date());
             }
@@ -157,6 +269,16 @@ export default function Home() {
         }, 2000);
         return () => clearTimeout(timer);
     }, [content, title]);
+
+    const toggleAmbientWeather = (value: AmbientWeatherValue) => {
+        setAmbientWeathers((current) =>
+            current.includes(value)
+                ? current.filter((item) => item !== value)
+                : ambientWeatherOptions
+                      .map((option) => option.value)
+                      .filter((option) => option === value || current.includes(option))
+        );
+    };
 
     return (
         <div className="space-y-6">
@@ -220,6 +342,11 @@ export default function Home() {
                     leftEmoji="😴"
                     rightEmoji="💪"
                 />
+            </div>
+
+            <div className="space-y-4">
+                <BaseWeatherControl value={baseWeather} onChange={setBaseWeather} />
+                <AmbientWeatherControl values={ambientWeathers} onToggle={toggleAmbientWeather} />
             </div>
 
             {/* Editor */}

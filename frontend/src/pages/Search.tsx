@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
 import { Search as SearchIcon, Calendar, Clock, Edit3, Heart, BatteryFull } from 'lucide-react';
 import { TextHighlight } from '../components/TextHighlight';
+import { getAmbientWeatherEmojis, getBaseWeatherEmoji } from '../lib/utils';
 
 interface SearchEntry {
     id: number;
@@ -15,6 +16,8 @@ interface SearchEntry {
     edit_count: number;
     mood: number;
     fulfillment: number;
+    base_weather: string;
+    ambient_weathers: string[];
 }
 
 export default function Search() {
@@ -88,6 +91,15 @@ export default function Search() {
                                     <Clock className="w-4 h-4" />
                                     {format(parseISO(entry.updated_at), 'HH:mm')}
                                 </span>
+                                {(entry.base_weather || entry.ambient_weathers?.length > 0) && (
+                                    <span className="flex items-center gap-1">
+                                        <span className="text-base leading-none">
+                                            {[getBaseWeatherEmoji(entry.base_weather), ...getAmbientWeatherEmojis(entry.ambient_weathers ?? [])]
+                                                .filter(Boolean)
+                                                .join(' ')}
+                                        </span>
+                                    </span>
+                                )}
                                 <span className="flex items-center gap-1">
                                     <Heart className="w-4 h-4" />
                                     {entry.mood ?? 0}

@@ -28,16 +28,18 @@ type App struct {
 }
 
 type Entry struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
-	Content   string    `json:"content"`
-	Created   time.Time `json:"created_at"`
-	Updated   time.Time `json:"updated_at"`
-	Day       string    `json:"day"` // calendar day YYYY-MM-DD
-	EditCount int       `json:"edit_count"`
-	Mood      int       `json:"mood"`
-	Fulfill   int       `json:"fulfillment"`
-	AutoTitle bool      `json:"auto_title"`
+	ID              int64     `json:"id"`
+	Title           string    `json:"title"`
+	Content         string    `json:"content"`
+	Created         time.Time `json:"created_at"`
+	Updated         time.Time `json:"updated_at"`
+	Day             string    `json:"day"` // calendar day YYYY-MM-DD
+	EditCount       int       `json:"edit_count"`
+	Mood            int       `json:"mood"`
+	Fulfill         int       `json:"fulfillment"`
+	BaseWeather     string    `json:"base_weather"`
+	AmbientWeathers []string  `json:"ambient_weathers"`
+	AutoTitle       bool      `json:"auto_title"`
 }
 
 func main() {
@@ -268,11 +270,13 @@ func (a *App) apiGetEntryByDate(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Date    string `json:"date"`
-		Content string `json:"content"`
-		Title   string `json:"title"`
-		Mood    int    `json:"mood"`
-		Fulfill int    `json:"fulfillment"`
+		Date            string   `json:"date"`
+		Content         string   `json:"content"`
+		Title           string   `json:"title"`
+		Mood            int      `json:"mood"`
+		Fulfill         int      `json:"fulfillment"`
+		BaseWeather     string   `json:"base_weather"`
+		AmbientWeathers []string `json:"ambient_weathers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -295,6 +299,16 @@ func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Mood = normalizeRating(req.Mood)
 	req.Fulfill = normalizeRating(req.Fulfill)
+	baseWeather, ok := normalizeBaseWeather(req.BaseWeather)
+	if !ok {
+		http.Error(w, "Invalid base weather", http.StatusBadRequest)
+		return
+	}
+	ambientWeathers, ok := normalizeAmbientWeathers(req.AmbientWeathers)
+	if !ok {
+		http.Error(w, "Invalid ambient weathers", http.StatusBadRequest)
+		return
+	}
 
 	contentChanged := existing == nil || req.Content != existing.Content
 	titleChanged := false
@@ -319,7 +333,7 @@ func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 		shouldGenerateTitle = strings.TrimSpace(req.Content) != ""
 	}
 
-	if err := a.upsertByDateWithUpdated(req.Date, req.Title, req.Content, req.Mood, req.Fulfill, autoTitle, contentChanged, nil); err != nil {
+	if err := a.upsertByDateWithUpdated(req.Date, req.Title, req.Content, req.Mood, req.Fulfill, baseWeather, ambientWeathers, autoTitle, contentChanged, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -442,18 +456,22 @@ func (a *App) apiExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type JSONEntry struct {
-		Date      string `json:"date"`
-		Title     string `json:"title"`
-		Content   string `json:"content"`
-		UpdatedAt string `json:"updated_at"`
+		Date            string   `json:"date"`
+		Title           string   `json:"title"`
+		Content         string   `json:"content"`
+		UpdatedAt       string   `json:"updated_at"`
+		BaseWeather     string   `json:"base_weather,omitempty"`
+		AmbientWeathers []string `json:"ambient_weathers,omitempty"`
 	}
 	out := make([]JSONEntry, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, JSONEntry{
-			Date:      e.Created.Local().Format("2006-01-02"),
-			Title:     e.Title,
-			Content:   e.Content,
-			UpdatedAt: e.Updated.UTC().Format(time.RFC3339),
+			Date:            e.Created.Local().Format("2006-01-02"),
+			Title:           e.Title,
+			Content:         e.Content,
+			UpdatedAt:       e.Updated.UTC().Format(time.RFC3339),
+			BaseWeather:     e.BaseWeather,
+			AmbientWeathers: e.AmbientWeathers,
 		})
 	}
 
@@ -511,6 +529,8 @@ func (a *App) apiImport(w http.ResponseWriter, r *http.Request) {
 		title := strings.TrimSpace(get("title"))
 		content := strings.TrimSpace(get("content"))
 		updatedStr := strings.TrimSpace(get("updatedat"))
+		baseWeather, _ := getStringAny(m, "baseweather")
+		ambientWeathers := getStringSliceAny(m, "ambientweathers")
 
 		if len(dateStr) != 10 {
 			continue
@@ -530,7 +550,15 @@ func (a *App) apiImport(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if err := a.upsertByDateWithUpdated(dateStr, title, content, 3, 3, false, true, updPtr); err == nil {
+		normalizedBaseWeather, okBase := normalizeBaseWeather(baseWeather)
+		if !okBase {
+			normalizedBaseWeather = ""
+		}
+		normalizedAmbientWeathers, okAmbient := normalizeAmbientWeathers(ambientWeathers)
+		if !okAmbient {
+			normalizedAmbientWeathers = nil
+		}
+		if err := a.upsertByDateWithUpdated(dateStr, title, content, 3, 3, normalizedBaseWeather, normalizedAmbientWeathers, false, true, updPtr); err == nil {
 			count++
 		}
 	}
@@ -571,6 +599,116 @@ func normalizeRating(v int) int {
 		return 3
 	}
 	return v
+}
+
+var allowedBaseWeathers = []string{"sunny", "cloudy", "overcast", "light_rain", "storm", "snow", "other"}
+var allowedAmbientWeathers = []string{"fog", "windy", "hot", "cold", "rainbow", "extreme"}
+
+func normalizeBaseWeather(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", true
+	}
+	for _, allowed := range allowedBaseWeathers {
+		if value == allowed {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func normalizeAmbientWeathers(values []string) ([]string, bool) {
+	if len(values) == 0 {
+		return []string{}, true
+	}
+	allowed := make(map[string]struct{}, len(allowedAmbientWeathers))
+	for _, value := range allowedAmbientWeathers {
+		allowed[value] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, false
+		}
+		if _, ok := allowed[value]; !ok {
+			return nil, false
+		}
+		seen[value] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for _, value := range allowedAmbientWeathers {
+		if _, ok := seen[value]; ok {
+			out = append(out, value)
+		}
+	}
+	return out, true
+}
+
+func encodeAmbientWeathers(values []string) string {
+	normalized, ok := normalizeAmbientWeathers(values)
+	if !ok {
+		return "[]"
+	}
+	b, err := json.Marshal(normalized)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+func decodeAmbientWeathers(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return []string{}
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(value), &values); err != nil {
+		return []string{}
+	}
+	normalized, ok := normalizeAmbientWeathers(values)
+	if !ok {
+		return []string{}
+	}
+	return normalized
+}
+
+func getStringAny(m map[string]any, key string) (string, bool) {
+	norm := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "_", "")) }
+	for k, v := range m {
+		if norm(k) != key {
+			continue
+		}
+		vs, ok := v.(string)
+		if !ok {
+			return "", false
+		}
+		return strings.TrimSpace(vs), true
+	}
+	return "", false
+}
+
+func getStringSliceAny(m map[string]any, key string) []string {
+	norm := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "_", "")) }
+	for k, v := range m {
+		if norm(k) != key {
+			continue
+		}
+		items, ok := v.([]any)
+		if !ok {
+			return nil
+		}
+		result := make([]string, 0, len(items))
+		for _, item := range items {
+			text, ok := item.(string)
+			if !ok {
+				return nil
+			}
+			result = append(result, strings.TrimSpace(text))
+		}
+		return result
+	}
+	return nil
 }
 
 func fallbackTitle(content, date string) string {
@@ -638,6 +776,23 @@ func (a *App) generateTitleInBackground(dateStr, content string) {
 }
 
 func (a *App) summarizeTitleWithLLM(content string) (string, error) {
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		title, err := a.summarizeTitleWithLLMOnce(content)
+		if err == nil {
+			return title, nil
+		}
+		lastErr = err
+		if attempt < maxAttempts {
+			log.Printf("[WARN] llm title attempt %d/%d failed: %v", attempt, maxAttempts, err)
+			time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+		}
+	}
+	return "", lastErr
+}
+
+func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(a.Cfg.LLM.BaseURL), "/")
 	apiKey := strings.TrimSpace(a.Cfg.LLM.APIKey)
 	model := strings.TrimSpace(a.Cfg.LLM.Model)
@@ -793,6 +948,8 @@ func migrate(db *sql.DB) error {
 			edit_count INTEGER NOT NULL DEFAULT 0,
 			mood INTEGER NOT NULL DEFAULT 3,
 			fulfillment INTEGER NOT NULL DEFAULT 3,
+			base_weather TEXT NOT NULL DEFAULT '',
+			ambient_weathers TEXT NOT NULL DEFAULT '[]',
 			auto_title INTEGER NOT NULL DEFAULT 0
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);`,
@@ -825,6 +982,16 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN auto_title INTEGER NOT NULL DEFAULT 0`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("add auto_title column: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN base_weather TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("add base_weather column: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN ambient_weathers TEXT NOT NULL DEFAULT '[]'`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("add ambient_weathers column: %w", err)
 		}
 	}
 	if _, err := db.Exec(`UPDATE entries SET day = DATE(created_at,'localtime') WHERE day IS NULL OR day=''`); err != nil {
@@ -905,7 +1072,7 @@ func maskToken(tok string) string {
 }
 
 func (a *App) listAllEntries() ([]*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title FROM entries ORDER BY created_at ASC`)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, base_weather, ambient_weathers, auto_title FROM entries ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -914,17 +1081,19 @@ func (a *App) listAllEntries() ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
+		var ambientWeathers string
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.BaseWeather, &ambientWeathers, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
 		e.Updated, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		e.AmbientWeathers = decodeAmbientWeathers(ambientWeathers)
 		list = append(list, &e)
 	}
 	return list, nil
 }
 
-func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulfill int, autoTitle, contentChanged bool, updatedAt *time.Time) error {
+func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulfill int, baseWeather string, ambientWeathers []string, autoTitle, contentChanged bool, updatedAt *time.Time) error {
 	if len(dateStr) != 10 {
 		return fmt.Errorf("bad date")
 	}
@@ -934,6 +1103,15 @@ func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulf
 	}
 	mood = normalizeRating(mood)
 	fulfill = normalizeRating(fulfill)
+	baseWeather, ok := normalizeBaseWeather(baseWeather)
+	if !ok {
+		return fmt.Errorf("invalid base weather")
+	}
+	ambientWeathers, ok = normalizeAmbientWeathers(ambientWeathers)
+	if !ok {
+		return fmt.Errorf("invalid ambient weathers")
+	}
+	ambientWeathersJSON := encodeAmbientWeathers(ambientWeathers)
 	createdUTC := dayLocal.UTC()
 	existing, _ := a.getEntryByDate(dateStr)
 	autoTitleInt := 0
@@ -945,7 +1123,7 @@ func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulf
 		if updatedAt != nil {
 			upd = updatedAt.UTC()
 		}
-		_, err = a.DB.Exec(`INSERT INTO entries(day, title, content, created_at, updated_at, edit_count, mood, fulfillment, auto_title) VALUES(?,?,?,?,?,?,?,?,?)`, dateStr, title, content, createdUTC, upd, 1, mood, fulfill, autoTitleInt)
+		_, err = a.DB.Exec(`INSERT INTO entries(day, title, content, created_at, updated_at, edit_count, mood, fulfillment, base_weather, ambient_weathers, auto_title) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, dateStr, title, content, createdUTC, upd, 1, mood, fulfill, baseWeather, ambientWeathersJSON, autoTitleInt)
 		return err
 	}
 	upd := time.Now().UTC()
@@ -953,15 +1131,15 @@ func (a *App) upsertByDateWithUpdated(dateStr, title, content string, mood, fulf
 		upd = updatedAt.UTC()
 	}
 	if contentChanged {
-		_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, edit_count=edit_count+1, mood=?, fulfillment=?, auto_title=? WHERE id=?`, title, content, upd, mood, fulfill, autoTitleInt, existing.ID)
+		_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, edit_count=edit_count+1, mood=?, fulfillment=?, base_weather=?, ambient_weathers=?, auto_title=? WHERE id=?`, title, content, upd, mood, fulfill, baseWeather, ambientWeathersJSON, autoTitleInt, existing.ID)
 		return err
 	}
-	_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, mood=?, fulfillment=?, auto_title=? WHERE id=?`, title, content, upd, mood, fulfill, autoTitleInt, existing.ID)
+	_, err = a.DB.Exec(`UPDATE entries SET title=?, content=?, updated_at=?, mood=?, fulfillment=?, base_weather=?, ambient_weathers=?, auto_title=? WHERE id=?`, title, content, upd, mood, fulfill, baseWeather, ambientWeathersJSON, autoTitleInt, existing.ID)
 	return err
 }
 
 func (a *App) getEntryByDate(date string) (*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title FROM entries WHERE day=? LIMIT 1`, date)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, base_weather, ambient_weathers, auto_title FROM entries WHERE day=? LIMIT 1`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -969,18 +1147,20 @@ func (a *App) getEntryByDate(date string) (*Entry, error) {
 	if rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
+		var ambientWeathers string
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.BaseWeather, &ambientWeathers, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
 		e.Updated, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		e.AmbientWeathers = decodeAmbientWeathers(ambientWeathers)
 		return &e, nil
 	}
 	return nil, nil
 }
 
 func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
-	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title FROM entries ORDER BY day DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := a.DB.Query(`SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, base_weather, ambient_weathers, auto_title FROM entries ORDER BY day DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -989,11 +1169,13 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
+		var ambientWeathers string
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.BaseWeather, &ambientWeathers, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
 		e.Updated, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		e.AmbientWeathers = decodeAmbientWeathers(ambientWeathers)
 		list = append(list, &e)
 	}
 	return list, nil
@@ -1002,7 +1184,7 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	like := "%" + q + "%"
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, base_weather, ambient_weathers, auto_title
 		FROM entries
 		WHERE title LIKE ? OR content LIKE ?
 		ORDER BY day DESC
@@ -1016,11 +1198,13 @@ func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
+		var ambientWeathers string
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.BaseWeather, &ambientWeathers, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
 		e.Updated, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		e.AmbientWeathers = decodeAmbientWeathers(ambientWeathers)
 		list = append(list, &e)
 	}
 	return list, nil
@@ -1028,7 +1212,7 @@ func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
 
 func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entry, error) {
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, base_weather, ambient_weathers, auto_title
 		FROM entries
 		WHERE day >= ? AND day < ?
 		ORDER BY day DESC
@@ -1042,11 +1226,13 @@ func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entr
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
+		var ambientWeathers string
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.BaseWeather, &ambientWeathers, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
 		e.Updated, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		e.AmbientWeathers = decodeAmbientWeathers(ambientWeathers)
 		list = append(list, &e)
 	}
 	return list, nil
@@ -1054,7 +1240,7 @@ func (a *App) listEntriesByRange(from, to time.Time, offset, limit int) ([]*Entr
 
 func (a *App) listEntriesByRangeAll(from, to time.Time) ([]*Entry, error) {
 	rows, err := a.DB.Query(`
-		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, auto_title
+		SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, base_weather, ambient_weathers, auto_title
 		FROM entries
 		WHERE day >= ? AND day < ?
 		ORDER BY day ASC
@@ -1067,11 +1253,13 @@ func (a *App) listEntriesByRangeAll(from, to time.Time) ([]*Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdStr, updatedStr string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.AutoTitle); err != nil {
+		var ambientWeathers string
+		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.BaseWeather, &ambientWeathers, &e.AutoTitle); err != nil {
 			return nil, err
 		}
 		e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
 		e.Updated, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		e.AmbientWeathers = decodeAmbientWeathers(ambientWeathers)
 		list = append(list, &e)
 	}
 	return list, nil
