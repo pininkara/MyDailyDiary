@@ -26,7 +26,7 @@ export default function Layout() {
                 <div className="p-6">
                     <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
                         <Book className="w-8 h-8 text-indigo-600" />
-                        喵の日记
+                        MyDailyDiary
                     </h1>
                 </div>
 
