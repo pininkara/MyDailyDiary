@@ -27,5 +27,7 @@ Thumbs.db
 .venv
 .env
 .env.local
+.python-version
+
 
 config.toml

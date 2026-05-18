@@ -25,10 +25,10 @@ COPY . .
 # In our main.go, we serve "frontend/dist". So we need to make sure the final image has this structure.
 
 ENV CGO_ENABLED=0
-RUN go build -o /out/diary .
+RUN go build -o /out/diary ./cmd/diary
 
 # ---- Stage 3: Final Image ----
-FROM alpine:3.20
+FROM alpine:3.22.4
 
 # Create non-root user
 RUN adduser -D -H -s /sbin/nologin appuser \

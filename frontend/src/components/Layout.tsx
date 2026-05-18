@@ -81,7 +81,7 @@ export default function Layout() {
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden z-10">
                 {/* Mobile Header */}
                 <header className="md:hidden bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between">
-                    <h1 className="text-xl font-bold text-gray-900 dark:text-white">喵の日记</h1>
+                    <h1 className="text-xl font-bold text-gray-900 dark:text-white">MDD</h1>
                     {/* Mobile menu button could go here */}
                 </header>
 
