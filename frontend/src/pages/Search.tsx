@@ -4,7 +4,7 @@ import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
 import { Search as SearchIcon, Calendar, Clock, Edit3, Heart, BatteryFull } from 'lucide-react';
 import { TextHighlight } from '../components/TextHighlight';
-import { getAmbientWeatherEmojis, getBaseWeatherEmoji } from '../lib/utils';
+import { getAmbientWeatherEmojis, getBaseWeatherEmoji, countContentUnits } from '../lib/utils';
 
 interface SearchEntry {
     id: number;
@@ -108,15 +108,19 @@ export default function Search() {
                                     <BatteryFull className="w-4 h-4" />
                                     {entry.fulfillment ?? 0}
                                 </span>
-                                <span className="flex items-center gap-1">
-                                    <Edit3 className="w-4 h-4" />
-                                    {entry.edit_count}
-                                </span>
+                                {/* moved edit_count to card footer */}
                             </div>
                         </div>
                         <p className="text-gray-600 dark:text-gray-300 line-clamp-3">
                             <TextHighlight text={entry.content} query={query} />
                         </p>
+                        <div className="mt-4 flex justify-end items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                            <div className="text-xs text-gray-500 dark:text-gray-400">{countContentUnits(entry.content)} words</div>
+                            <span className="flex items-center gap-1">
+                                <Edit3 className="w-4 h-4" />
+                                {entry.edit_count}
+                            </span>
+                        </div>
                     </Link>
                 ))}
 

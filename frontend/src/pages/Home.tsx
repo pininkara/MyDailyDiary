@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { format, addDays, subDays, parseISO } from 'date-fns';
-import { ChevronLeft, ChevronRight, Save } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Save, RefreshCw } from 'lucide-react';
 import api from '../lib/api';
 import {
     ambientWeatherOptions,
@@ -11,6 +11,7 @@ import {
     isBaseWeatherValue,
     type AmbientWeatherValue,
     type BaseWeatherValue,
+    countContentUnits,
 } from '../lib/utils';
 
 const ratingLabels = [1, 2, 3, 4, 5];
@@ -179,6 +180,36 @@ export default function Home() {
 
     const dateStr = format(date, 'yyyy-MM-dd');
 
+    // Debounced display count to avoid running regex on every keystroke
+    const [displayCount, setDisplayCount] = React.useState(0);
+    React.useEffect(() => {
+        const t = setTimeout(() => {
+            setDisplayCount(countContentUnits(content));
+        }, 350);
+        return () => clearTimeout(t);
+    }, [content]);
+
+    const [toastMessage, setToastMessage] = useState('');
+
+    const regenerateTitle = async () => {
+        try {
+            setToastMessage('正在重新生成标题');
+            const res = await api.post('/generate-title-and-save', { content, date: dateStr });
+            const entry = res.data;
+            if (entry) {
+                setTitle(entry.title || '');
+                setLastSaved(entry.updated_at ? parseISO(entry.updated_at) : new Date());
+                setEditCount(entry.edit_count || 0);
+            }
+        } catch (err) {
+            console.error('generate+save title failed', err);
+            setToastMessage('生成标题失败');
+            setTimeout(() => setToastMessage(''), 2000);
+            return;
+        }
+        setTimeout(() => setToastMessage(''), 1800);
+    };
+
     useEffect(() => {
         setSearchParams({ date: dateStr }, { replace: true });
         loadEntry();
@@ -315,7 +346,6 @@ export default function Home() {
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-400">Edits {editCount}</span>
                     {lastSaved && (
                         <span className="text-xs text-gray-400">
                             Saved {format(lastSaved, 'HH:mm')}
@@ -351,20 +381,43 @@ export default function Home() {
 
             {/* Editor */}
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden min-h-[60vh] flex flex-col">
-                <input
-                    type="text"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Title (optional)"
-                    className="w-full px-6 py-4 text-xl font-semibold bg-transparent border-b border-gray-100 dark:border-gray-700 focus:outline-none dark:text-white"
-                />
+                <div className="relative">
+                    <input
+                        type="text"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        placeholder="Title (optional)"
+                        className="w-full px-6 py-4 text-xl font-semibold bg-transparent border-b border-gray-100 dark:border-gray-700 focus:outline-none dark:text-white"
+                    />
+                    <button
+                        type="button"
+                        onClick={regenerateTitle}
+                        aria-label="Regenerate title"
+                        title="重新生成标题"
+                        className="absolute right-4 top-3 p-2 rounded-lg border border-gray-200 bg-white/80 dark:bg-gray-700/70 dark:border-gray-600 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-700/30 hover:scale-105 transition transform shadow-sm"
+                    >
+                        <RefreshCw className="w-5 h-5" />
+                    </button>
+                    {/* toast moved to bottom-center */}
+                </div>
                 <textarea
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     placeholder="Write your thoughts..."
                     className="flex-1 w-full p-6 resize-none focus:outline-none bg-transparent text-lg leading-relaxed dark:text-gray-200"
                 />
+                <div className="px-6 py-3 flex justify-end items-center gap-4 border-t border-gray-100 dark:border-gray-700">
+                    <div className="text-xs text-gray-500 dark:text-gray-400">{displayCount} words</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Edits {editCount}</div>
+                </div>
             </div>
+            {toastMessage && (
+                <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 z-50 pointer-events-none">
+                    <div className="inline-block bg-black/80 text-white text-sm px-4 py-2 rounded-md shadow-lg opacity-100 transition-all duration-200">
+                        {toastMessage}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -260,6 +260,83 @@ func (a *App) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) apiGenerateTitle(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Content string `json:"content"`
+		Date    string `json:"date"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	req.Content = strings.TrimSpace(req.Content)
+	req.Date = strings.TrimSpace(req.Date)
+	if req.Date == "" {
+		// optional: use today
+		req.Date = time.Now().Format("2006-01-02")
+	}
+	title := a.generateTitle(req.Content, req.Date)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"title": title})
+}
+
+func (a *App) apiGenerateTitleAndSave(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Content string `json:"content"`
+		Date    string `json:"date"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	req.Content = strings.TrimSpace(req.Content)
+	req.Date = strings.TrimSpace(req.Date)
+	if req.Date == "" {
+		req.Date = time.Now().Format("2006-01-02")
+	}
+
+	// Generate title via existing logic (may call LLM)
+	title := a.generateTitle(req.Content, req.Date)
+
+	// Fetch existing entry to preserve other fields
+	existing, err := a.getEntryByDate(req.Date)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	mood := 3
+	fulfill := 3
+	baseWeather := ""
+	ambient := []string{}
+	if existing != nil {
+		mood = existing.Mood
+		fulfill = existing.Fulfill
+		baseWeather = existing.BaseWeather
+		ambient = existing.AmbientWeathers
+	}
+
+	now := time.Now().UTC()
+	// Save with autoTitle = true, contentChanged = false (we're only updating title)
+	if err := a.upsertByDateWithUpdated(req.Date, title, req.Content, mood, fulfill, baseWeather, ambient, true, false, &now); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	entry, err := a.getEntryByDate(req.Date)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if entry == nil {
+		http.Error(w, "Entry not found after save", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entry)
+}
+
 func (a *App) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username   string `json:"username"`

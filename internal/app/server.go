@@ -50,6 +50,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/stats", a.requireAuth(http.HandlerFunc(a.apiStats)))
 	mux.Handle("GET /api/settings", a.requireAuth(http.HandlerFunc(a.apiGetSettings)))
 	mux.Handle("POST /api/settings", a.requireAuth(http.HandlerFunc(a.apiUpdateSettings)))
+	mux.Handle("POST /api/generate-title", a.requireAuth(http.HandlerFunc(a.apiGenerateTitle)))
+	mux.Handle("POST /api/generate-title-and-save", a.requireAuth(http.HandlerFunc(a.apiGenerateTitleAndSave)))
 	mux.Handle("GET /api/export", a.requireAuth(http.HandlerFunc(a.apiExport)))
 	mux.Handle("POST /api/import", a.requireAuth(http.HandlerFunc(a.apiImport)))
 

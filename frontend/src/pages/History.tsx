@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
 import { Calendar, Clock, ChevronDown, ChevronUp, Edit3, Heart, BatteryFull } from 'lucide-react';
-import { getAmbientWeatherEmojis, getBaseWeatherEmoji } from '../lib/utils';
+import { getAmbientWeatherEmojis, getBaseWeatherEmoji, countContentUnits } from '../lib/utils';
 
 interface HistoryEntry {
     id: number;
@@ -180,10 +180,7 @@ export default function History() {
                                     <BatteryFull className="w-4 h-4" />
                                     {entry.fulfillment ?? 0}
                                 </span>
-                                <span className="flex items-center gap-1">
-                                    <Edit3 className="w-4 h-4" />
-                                    {entry.edit_count}
-                                </span>
+                                {/* moved edit_count to card footer */}
                             </div>
                         </div>
                         <div className="mt-2">
@@ -202,6 +199,13 @@ export default function History() {
                                     )}
                                 </button>
                             )}
+                            <div className="mt-4 flex justify-end items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                                <div className="text-xs text-gray-500 dark:text-gray-400">{countContentUnits(entry.content)} words</div>
+                                <span className="flex items-center gap-1">
+                                    <Edit3 className="w-4 h-4" />
+                                    {entry.edit_count}
+                                </span>
+                            </div>
                         </div>
                     </Link>
                 ))}

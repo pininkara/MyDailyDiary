@@ -47,3 +47,16 @@ export function getAmbientWeatherEmojis(values: string[]) {
         .filter(option => values.includes(option.value))
         .map(option => option.emoji)
 }
+
+// Count units per rules: English words count as words, digits and CJK count as characters.
+export function countContentUnits(text: string) {
+    if (!text) return 0;
+    // English words (allow apostrophes inside words like don't)
+    const englishMatches = text.match(/[A-Za-z]+(?:'[A-Za-z]+)*/g) || [];
+    // Unicode digits
+    const digitMatches = text.match(/\p{Nd}/gu) || [];
+    // CJK: Han, Hiragana, Katakana, Hangul
+    const cjkMatches = text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) || [];
+
+    return englishMatches.length + digitMatches.length + cjkMatches.length;
+}
