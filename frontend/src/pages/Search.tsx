@@ -1,10 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
 import { Search as SearchIcon, Calendar, Clock, Edit3, Heart, BatteryFull } from 'lucide-react';
 import { TextHighlight } from '../components/TextHighlight';
-import { getAmbientWeatherEmojis, getBaseWeatherEmoji, countContentUnits } from '../lib/utils';
+import {
+    ambientWeatherOptions,
+    baseWeatherOptions,
+    cn,
+    getAmbientWeatherEmojis,
+    getBaseWeatherEmoji,
+    countContentUnits,
+    type AmbientWeatherValue,
+    type BaseWeatherValue,
+} from '../lib/utils';
 
 interface SearchEntry {
     id: number;
@@ -24,22 +33,51 @@ export default function Search() {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchEntry[]>([]);
     const [loading, setLoading] = useState(false);
+    const [baseWeather, setBaseWeather] = useState<BaseWeatherValue | ''>('');
+    const [ambientWeathers, setAmbientWeathers] = useState<AmbientWeatherValue[]>([]);
+    const [moods, setMoods] = useState<number[]>([]);
+    const [fulfillments, setFulfillments] = useState<number[]>([]);
+
+    const ratingOptions = useMemo(() => [1, 2, 3, 4, 5], []);
+
+    const hasFilters =
+        baseWeather !== '' || ambientWeathers.length > 0 || moods.length > 0 || fulfillments.length > 0;
+    const hasActiveSearch = query.trim().length > 0 || hasFilters;
 
     useEffect(() => {
         const timer = setTimeout(() => {
-            if (query.trim()) {
+            if (hasActiveSearch) {
                 performSearch();
             } else {
                 setResults([]);
             }
         }, 500);
         return () => clearTimeout(timer);
-    }, [query]);
+    }, [query, baseWeather, ambientWeathers, moods, fulfillments, hasActiveSearch]);
+
+    const toggleRating = (list: number[], value: number) =>
+        list.includes(value) ? list.filter((item) => item !== value) : [...list, value].sort();
+
+    const toggleAmbient = (value: AmbientWeatherValue) => {
+        setAmbientWeathers((prev) =>
+            prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+        );
+    };
 
     const performSearch = async () => {
         setLoading(true);
         try {
-            const res = await api.get(`/search?q=${encodeURIComponent(query)}`);
+            const params = new URLSearchParams();
+            if (query.trim()) {
+                params.set('q', query.trim());
+            }
+            if (baseWeather) {
+                params.set('base_weather', baseWeather);
+            }
+            ambientWeathers.forEach((value) => params.append('ambient', value));
+            moods.forEach((value) => params.append('mood', String(value)));
+            fulfillments.forEach((value) => params.append('fulfillment', String(value)));
+            const res = await api.get(`/search?${params.toString()}`);
             setResults(res.data || []);
         } catch (err) {
             console.error(err);
@@ -65,8 +103,148 @@ export default function Search() {
                 />
             </div>
 
+            <div className="rounded-2xl border border-indigo-100/80 dark:border-indigo-500/20 bg-gradient-to-br from-indigo-50 via-white to-rose-50 dark:from-indigo-950/40 dark:via-gray-900 dark:to-rose-950/30 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-200">Filters</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Match any selected option within each group
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setBaseWeather('');
+                            setAmbientWeathers([]);
+                            setMoods([]);
+                            setFulfillments([]);
+                        }}
+                        className="text-xs font-medium text-gray-600 hover:text-indigo-600 dark:text-gray-300 dark:hover:text-indigo-300"
+                    >
+                        Clear all
+                    </button>
+                </div>
+
+                <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-xl border border-gray-200/80 dark:border-gray-700 bg-white/80 dark:bg-gray-900/60 p-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Base Weather</span>
+                            <span className="text-xs text-gray-400">single</span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-7 gap-2">
+                            {baseWeatherOptions.map((option) => {
+                                const active = baseWeather === option.value;
+                                return (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        aria-label={option.label}
+                                        aria-pressed={active}
+                                        onClick={() => setBaseWeather(active ? '' : option.value)}
+                                        className={cn(
+                                            'flex h-12 items-center justify-center rounded-lg text-xl transition-all',
+                                            active
+                                                ? 'bg-white shadow-sm ring-1 ring-black/5 dark:bg-gray-800 dark:ring-white/10'
+                                                : 'bg-gray-50 text-gray-500 hover:bg-white dark:bg-gray-800/60 dark:text-gray-300 dark:hover:bg-gray-700'
+                                        )}
+                                    >
+                                        <span className="emoji-font">{option.emoji}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-200/80 dark:border-gray-700 bg-white/80 dark:bg-gray-900/60 p-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Ambient Weather</span>
+                            <span className="text-xs text-gray-400">{ambientWeathers.length} selected</span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                            {ambientWeatherOptions.map((option) => {
+                                const active = ambientWeathers.includes(option.value);
+                                return (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        aria-label={option.label}
+                                        aria-pressed={active}
+                                        onClick={() => toggleAmbient(option.value)}
+                                        className={cn(
+                                            'flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-xs transition-all',
+                                            active
+                                                ? 'bg-white shadow-sm ring-1 ring-black/5 dark:bg-gray-800 dark:ring-white/10'
+                                                : 'bg-gray-50 text-gray-500 hover:bg-white dark:bg-gray-800/60 dark:text-gray-300 dark:hover:bg-gray-700'
+                                        )}
+                                    >
+                                        <span className="emoji-font text-lg leading-none">{option.emoji}</span>
+                                        <span className="text-[11px] text-gray-600 dark:text-gray-300">{option.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-200/80 dark:border-gray-700 bg-white/80 dark:bg-gray-900/60 p-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Mood</span>
+                            <span className="text-xs text-gray-400">{moods.length} selected</span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {ratingOptions.map((value) => {
+                                const active = moods.includes(value);
+                                return (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        aria-pressed={active}
+                                        onClick={() => setMoods((prev) => toggleRating(prev, value))}
+                                        className={cn(
+                                            'min-w-10 rounded-full px-3 py-1.5 text-sm font-semibold transition-all',
+                                            active
+                                                ? 'bg-indigo-600 text-white shadow-sm'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-white dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                                        )}
+                                    >
+                                        {value}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-200/80 dark:border-gray-700 bg-white/80 dark:bg-gray-900/60 p-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Fulfillment</span>
+                            <span className="text-xs text-gray-400">{fulfillments.length} selected</span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {ratingOptions.map((value) => {
+                                const active = fulfillments.includes(value);
+                                return (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        aria-pressed={active}
+                                        onClick={() => setFulfillments((prev) => toggleRating(prev, value))}
+                                        className={cn(
+                                            'min-w-10 rounded-full px-3 py-1.5 text-sm font-semibold transition-all',
+                                            active
+                                                ? 'bg-rose-500 text-white shadow-sm'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-white dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                                        )}
+                                    >
+                                        {value}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div className="space-y-4">
-                {query && !loading && (
+                {hasActiveSearch && !loading && (
                     <p className="text-sm text-gray-500 dark:text-gray-400">
                         Found {results.length} result{results.length !== 1 ? 's' : ''}
                     </p>
@@ -124,9 +302,9 @@ export default function Search() {
                     </Link>
                 ))}
 
-                {query && !loading && results.length === 0 && (
+                {hasActiveSearch && !loading && results.length === 0 && (
                     <div className="text-center py-12 text-gray-500">
-                        No results found for "{query}"
+                        {query.trim() ? `No results found for "${query}"` : 'No results found for selected filters'}
                     </div>
                 )}
             </div>

@@ -202,15 +202,56 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 	return list, nil
 }
 
-func (a *App) searchEntries(q string, limit int) ([]*Entry, error) {
-	like := "%" + q + "%"
-	rows, err := a.DB.Query(`
+func (a *App) searchEntries(q string, limit int, baseWeather string, ambientWeathers []string, moods []int, fulfillments []int) ([]*Entry, error) {
+	clauses := []string{}
+	args := []any{}
+	if q != "" {
+		like := "%" + q + "%"
+		clauses = append(clauses, "(title LIKE ? OR content LIKE ?)")
+		args = append(args, like, like)
+	}
+
+	if baseWeather != "" {
+		clauses = append(clauses, "base_weather = ?")
+		args = append(args, baseWeather)
+	}
+	if len(ambientWeathers) > 0 {
+		parts := make([]string, 0, len(ambientWeathers))
+		for _, value := range ambientWeathers {
+			parts = append(parts, "ambient_weathers LIKE ?")
+			args = append(args, "%\""+value+"\"%")
+		}
+		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+	}
+	if len(moods) > 0 {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(moods)), ",")
+		clauses = append(clauses, "mood IN ("+placeholders+")")
+		for _, value := range moods {
+			args = append(args, value)
+		}
+	}
+	if len(fulfillments) > 0 {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(fulfillments)), ",")
+		clauses = append(clauses, "fulfillment IN ("+placeholders+")")
+		for _, value := range fulfillments {
+			args = append(args, value)
+		}
+	}
+
+	if len(clauses) == 0 {
+		return []*Entry{}, nil
+	}
+
+	query := fmt.Sprintf(`
         SELECT id, title, content, created_at, updated_at, day, edit_count, mood, fulfillment, base_weather, ambient_weathers, auto_title
         FROM entries
-        WHERE title LIKE ? OR content LIKE ?
+        WHERE %s
         ORDER BY day DESC
         LIMIT ?
-    `, like, like, limit)
+    `, strings.Join(clauses, " AND "))
+	args = append(args, limit)
+
+	rows, err := a.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

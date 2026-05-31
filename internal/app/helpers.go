@@ -53,6 +53,10 @@ func normalizeRating(v int) int {
 	return v
 }
 
+func isRatingValue(v int) bool {
+	return v >= 1 && v <= 5
+}
+
 var allowedBaseWeathers = []string{"sunny", "cloudy", "overcast", "light_rain", "storm", "snow", "other"}
 var allowedAmbientWeathers = []string{"fog", "windy", "hot", "cold", "rainbow", "extreme"}
 

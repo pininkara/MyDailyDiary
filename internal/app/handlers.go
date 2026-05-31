@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -214,12 +215,79 @@ func (a *App) apiSaveEntry(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) apiSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" {
+	parseList := func(key string) []string {
+		values := r.URL.Query()[key]
+		if len(values) == 0 {
+			return nil
+		}
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			for _, item := range strings.Split(value, ",") {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					out = append(out, item)
+				}
+			}
+		}
+		return out
+	}
+
+	baseWeather := strings.TrimSpace(r.URL.Query().Get("base_weather"))
+	if baseWeather != "" {
+		var ok bool
+		baseWeather, ok = normalizeBaseWeather(baseWeather)
+		if !ok {
+			http.Error(w, "Invalid base weather", http.StatusBadRequest)
+			return
+		}
+	}
+
+	ambientWeathers, ok := normalizeAmbientWeathers(parseList("ambient"))
+	if !ok {
+		http.Error(w, "Invalid ambient weathers", http.StatusBadRequest)
+		return
+	}
+
+	parseRatings := func(key string) ([]int, error) {
+		values := parseList(key)
+		if len(values) == 0 {
+			return nil, nil
+		}
+		seen := map[int]struct{}{}
+		out := make([]int, 0, len(values))
+		for _, value := range values {
+			parsed, err := strconv.Atoi(value)
+			if err != nil || !isRatingValue(parsed) {
+				return nil, fmt.Errorf("invalid rating")
+			}
+			if _, exists := seen[parsed]; exists {
+				continue
+			}
+			seen[parsed] = struct{}{}
+			out = append(out, parsed)
+		}
+		sort.Ints(out)
+		return out, nil
+	}
+
+	moods, err := parseRatings("mood")
+	if err != nil {
+		http.Error(w, "Invalid mood", http.StatusBadRequest)
+		return
+	}
+	fulfillments, err := parseRatings("fulfillment")
+	if err != nil {
+		http.Error(w, "Invalid fulfillment", http.StatusBadRequest)
+		return
+	}
+
+	hasFilters := baseWeather != "" || len(ambientWeathers) > 0 || len(moods) > 0 || len(fulfillments) > 0
+	if q == "" && !hasFilters {
 		json.NewEncoder(w).Encode([]*Entry{})
 		return
 	}
 
-	results, err := a.searchEntries(q, 100)
+	results, err := a.searchEntries(q, 100, baseWeather, ambientWeathers, moods, fulfillments)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
