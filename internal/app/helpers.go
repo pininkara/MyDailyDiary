@@ -4,9 +4,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
+
+var (
+	englishWordRe = regexp.MustCompile(`[A-Za-z]+(?:'[A-Za-z]+)*`)
+)
+
+func countContentUnits(text string) int {
+	if text == "" {
+		return 0
+	}
+	count := len(englishWordRe.FindAllString(text, -1))
+	for _, r := range text {
+		if unicode.IsDigit(r) || unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) {
+			count++
+		}
+	}
+	return count
+}
 
 func makeSnippet(s string, n int) string {
 	if n <= 0 {
@@ -167,12 +186,14 @@ func startOfWeekMonday(t time.Time) time.Time {
 
 func buildContributionWeeks(entries []*Entry, end time.Time) [][]DayCell {
 	counts := map[string]int{}
+	wordCounts := map[string]int{}
 	maxCount := 0
 	for _, e := range entries {
 		if e.Day == "" {
 			continue
 		}
 		counts[e.Day] += e.EditCount
+		wordCounts[e.Day] += countContentUnits(e.Content)
 		if counts[e.Day] > maxCount {
 			maxCount = counts[e.Day]
 		}
@@ -195,7 +216,7 @@ func buildContributionWeeks(entries []*Entry, end time.Time) [][]DayCell {
 					level = 4
 				}
 			}
-			week = append(week, DayCell{Date: key, Count: count, Level: level})
+			week = append(week, DayCell{Date: key, Count: count, Words: wordCounts[key], Level: level})
 		}
 		weeks = append(weeks, week)
 	}

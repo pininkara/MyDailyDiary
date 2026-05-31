@@ -31,6 +31,7 @@ type Entry struct {
 type DayCell struct {
 	Date  string `json:"date"`
 	Count int    `json:"count"`
+	Words int    `json:"words"`
 	Level int    `json:"level"`
 }
 

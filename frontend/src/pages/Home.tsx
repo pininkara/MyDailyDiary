@@ -36,7 +36,7 @@ function RatingControl({
                 <span className="text-xs text-gray-400">{value}/5</span>
             </div>
             <div className="mt-3 flex items-center gap-2">
-                <span className="shrink-0 select-none text-lg leading-none">{leftEmoji}</span>
+                <span className="emoji-font shrink-0 select-none text-lg leading-none">{leftEmoji}</span>
                 <div className="relative flex-1 rounded-xl bg-gray-100 dark:bg-gray-700 p-1 overflow-hidden h-14">
                     <div className="absolute inset-1 grid grid-cols-5 gap-1 pointer-events-none">
                         {ratingLabels.map((rating) => {
@@ -66,7 +66,7 @@ function RatingControl({
                         className="absolute inset-0 h-full w-full cursor-pointer opacity-0 touch-none"
                     />
                 </div>
-                <span className="shrink-0 select-none text-lg leading-none">{rightEmoji}</span>
+                <span className="emoji-font shrink-0 select-none text-lg leading-none">{rightEmoji}</span>
             </div>
         </div>
     );
@@ -103,7 +103,7 @@ function BaseWeatherControl({
                                         : 'text-gray-500 hover:bg-white/70 dark:text-gray-300 dark:hover:bg-gray-600'
                                 )}
                             >
-                                {option.emoji}
+                                <span className="emoji-font">{option.emoji}</span>
                             </button>
                         );
                     })}
@@ -143,7 +143,7 @@ function AmbientWeatherControl({
                                     : 'text-gray-500 hover:bg-white/70 dark:text-gray-300 dark:hover:bg-gray-600'
                             )}
                         >
-                            <span className="text-xl leading-none">{option.emoji}</span>
+                            <span className="emoji-font text-xl leading-none">{option.emoji}</span>
                             <span className="text-[11px] leading-none text-gray-600 dark:text-gray-300 whitespace-nowrap">
                                 {option.label}
                             </span>

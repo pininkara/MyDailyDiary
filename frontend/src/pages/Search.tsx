@@ -93,7 +93,7 @@ export default function Search() {
                                 </span>
                                 {(entry.base_weather || entry.ambient_weathers?.length > 0) && (
                                     <span className="flex items-center gap-1">
-                                        <span className="text-base leading-none">
+                                        <span className="emoji-font text-base leading-none">
                                             {[getBaseWeatherEmoji(entry.base_weather), ...getAmbientWeatherEmojis(entry.ambient_weathers ?? [])]
                                                 .filter(Boolean)
                                                 .join(' ')}

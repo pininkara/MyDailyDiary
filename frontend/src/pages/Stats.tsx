@@ -4,6 +4,7 @@ import api from '../lib/api';
 interface DayCell {
     date: string;
     count: number;
+    words: number;
     level: number;
 }
 
@@ -57,7 +58,9 @@ export default function Stats() {
                                 <div className="text-xs text-gray-400">{totalEdits} edits in the last year</div>
                             </div>
                             <div className="h-6 text-xs text-gray-500 dark:text-gray-400">
-                                {hovered ? `${hovered.count} edit${hovered.count === 1 ? '' : 's'} on ${hovered.date}` : 'Hover a day to see details'}
+                                {hovered
+                                    ? `${hovered.count} edit${hovered.count === 1 ? '' : 's'}, ${hovered.words} word${hovered.words === 1 ? '' : 's'} on ${hovered.date}`
+                                    : 'Hover a day to see details'}
                             </div>
                         </div>
                         <div className="overflow-x-auto">
