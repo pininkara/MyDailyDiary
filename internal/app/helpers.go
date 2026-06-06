@@ -227,6 +227,50 @@ func buildContributionWeeks(entries []*Entry, end time.Time) [][]DayCell {
 	return weeks
 }
 
+func buildPeriodStats(entries []*Entry, from, to time.Time) PeriodStats {
+	fromKey := from.Format("2006-01-02")
+	toKey := to.Format("2006-01-02")
+	moodCounts := make([]int, 6)
+	fulfillmentCounts := make([]int, 6)
+	var stats PeriodStats
+	var moodTotal, fulfillmentTotal int
+
+	for _, e := range entries {
+		if e.Day == "" || e.Day < fromKey || e.Day >= toKey {
+			continue
+		}
+		stats.Entries++
+		stats.TotalWords += countContentUnits(e.Content)
+		mood := normalizeRating(e.Mood)
+		fulfillment := normalizeRating(e.Fulfill)
+		moodTotal += mood
+		fulfillmentTotal += fulfillment
+		moodCounts[mood]++
+		fulfillmentCounts[fulfillment]++
+	}
+
+	if stats.Entries > 0 {
+		stats.AverageWords = float64(stats.TotalWords) / float64(stats.Entries)
+		stats.AverageMood = float64(moodTotal) / float64(stats.Entries)
+		stats.AverageFulfillment = float64(fulfillmentTotal) / float64(stats.Entries)
+	}
+	stats.MoodDistribution = buildRatingDistribution(moodCounts, stats.Entries)
+	stats.FulfillmentDistribution = buildRatingDistribution(fulfillmentCounts, stats.Entries)
+	return stats
+}
+
+func buildRatingDistribution(counts []int, total int) []RatingDistributionItem {
+	distribution := make([]RatingDistributionItem, 0, 5)
+	for level := 1; level <= 5; level++ {
+		percent := 0
+		if total > 0 {
+			percent = int(math.Round(float64(counts[level]) / float64(total) * 100))
+		}
+		distribution = append(distribution, RatingDistributionItem{Level: level, Count: counts[level], Percent: percent})
+	}
+	return distribution
+}
+
 func subtleEqual(a, b string) bool {
 	if len(a) != len(b) {
 		return false

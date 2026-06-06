@@ -306,8 +306,16 @@ func (a *App) apiStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dayEnd := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location()).AddDate(0, 0, 1)
+	weekStart := startOfWeekMonday(end)
+	monthStart := time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, end.Location())
+
 	resp := map[string]any{
 		"weeks": buildContributionWeeks(entries, end),
+		"periods": map[string]PeriodStats{
+			"month": buildPeriodStats(entries, monthStart, dayEnd),
+			"week":  buildPeriodStats(entries, weekStart, dayEnd),
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")

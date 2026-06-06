@@ -35,6 +35,22 @@ type DayCell struct {
 	Level int    `json:"level"`
 }
 
+type RatingDistributionItem struct {
+	Level   int `json:"level"`
+	Count   int `json:"count"`
+	Percent int `json:"percent"`
+}
+
+type PeriodStats struct {
+	Entries                 int                      `json:"entries"`
+	TotalWords              int                      `json:"total_words"`
+	AverageWords            float64                  `json:"average_words"`
+	AverageMood             float64                  `json:"average_mood"`
+	AverageFulfillment      float64                  `json:"average_fulfillment"`
+	MoodDistribution        []RatingDistributionItem `json:"mood_distribution"`
+	FulfillmentDistribution []RatingDistributionItem `json:"fulfillment_distribution"`
+}
+
 type Config struct {
 	Server struct {
 		Address string `toml:"address"`
