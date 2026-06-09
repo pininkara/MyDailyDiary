@@ -86,13 +86,95 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`UPDATE entries SET day = DATE(created_at,'localtime') WHERE day IS NULL OR day=''`); err != nil {
 		return fmt.Errorf("backfill day: %w", err)
 	}
-	if _, err := db.Exec(`UPDATE entries SET created_at = day || 'T00:00:00Z' WHERE day IS NOT NULL AND day!='' AND created_at NOT LIKE day || '%'`); err != nil {
-		log.Printf("[WARN] normalize created_at: %v", err)
+	if err := normalizeExistingEntryTimestamps(db); err != nil {
+		log.Printf("[WARN] normalize timestamps: %v", err)
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_day ON entries(day)`); err != nil {
 		return fmt.Errorf("create unique day index: %w", err)
 	}
 	return nil
+}
+
+func normalizeExistingEntryTimestamps(db *sql.DB) error {
+	rows, err := db.Query(`SELECT id, day, created_at, updated_at FROM entries WHERE day IS NOT NULL AND day!=''`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type rowData struct {
+		id      int64
+		day     string
+		created string
+		updated string
+	}
+	var rowsData []rowData
+	for rows.Next() {
+		var r rowData
+		if err := rows.Scan(&r.id, &r.day, &r.created, &r.updated); err != nil {
+			return err
+		}
+		rowsData = append(rowsData, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, r := range rowsData {
+		created := normalizeTimestampWithDay(r.created, r.day)
+		updated := normalizeTimestampWithDay(r.updated, r.day)
+		if _, err := db.Exec(`UPDATE entries SET created_at=?, updated_at=? WHERE id=?`, created, updated, r.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeTimestampWithDay(value, day string) string {
+	t, ok := parseTimestampWithDay(value, day)
+	if !ok {
+		dayTime, err := time.ParseInLocation("2006-01-02 15:04:05", day+" 20:00:00", time.Local)
+		if err != nil {
+			return time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		return dayTime.UTC().Format(time.RFC3339Nano)
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func parseTimestampWithDay(value, day string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+
+	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return t, true
+	}
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", value, time.Local); err == nil {
+		return t, true
+	}
+	if t, err := time.ParseInLocation("2006-01-02 15:04", value, time.Local); err == nil {
+		return t, true
+	}
+	if t, err := time.ParseInLocation("2006-01-02", value, time.Local); err == nil {
+		return time.Date(t.Year(), t.Month(), t.Day(), 20, 0, 0, 0, time.Local), true
+	}
+	if t, err := time.ParseInLocation("15:04:05", value, time.Local); err == nil {
+		dayTime, err := time.ParseInLocation("2006-01-02", day, time.Local)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return time.Date(dayTime.Year(), dayTime.Month(), dayTime.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.Local), true
+	}
+	if t, err := time.ParseInLocation("15:04", value, time.Local); err == nil {
+		dayTime, err := time.ParseInLocation("2006-01-02", day, time.Local)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return time.Date(dayTime.Year(), dayTime.Month(), dayTime.Day(), t.Hour(), t.Minute(), 0, 0, time.Local), true
+	}
+	return time.Time{}, false
 }
 
 func scanEntry(scanner interface{ Scan(dest ...any) error }, e *Entry) error {
@@ -101,8 +183,8 @@ func scanEntry(scanner interface{ Scan(dest ...any) error }, e *Entry) error {
 	if err := scanner.Scan(&e.ID, &e.Title, &e.Content, &createdStr, &updatedStr, &e.Day, &e.EditCount, &e.Mood, &e.Fulfill, &e.BaseWeather, &ambientWeathers, &e.AutoTitle); err != nil {
 		return err
 	}
-	e.Created, _ = time.Parse(time.RFC3339Nano, createdStr)
-	e.Updated, _ = time.Parse(time.RFC3339Nano, updatedStr)
+	e.Created, _ = time.Parse(time.RFC3339Nano, normalizeTimestampWithDay(createdStr, e.Day))
+	e.Updated, _ = time.Parse(time.RFC3339Nano, normalizeTimestampWithDay(updatedStr, e.Day))
 	e.AmbientWeathers = decodeAmbientWeathers(ambientWeathers)
 	return nil
 }

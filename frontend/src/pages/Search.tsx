@@ -267,7 +267,7 @@ export default function Search() {
                                 </span>
                                 <span className="flex items-center gap-1">
                                     <Clock className="w-4 h-4" />
-                                    {format(parseISO(entry.updated_at), 'HH:mm')}
+                                    {format(parseISO(entry.updated_at), 'MMM d, yyyy HH:mm')}
                                 </span>
                                 {(entry.base_weather || entry.ambient_weathers?.length > 0) && (
                                     <span className="flex items-center gap-1">

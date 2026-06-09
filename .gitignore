@@ -1,6 +1,6 @@
 # Go
 diary.exe
-diary
+./diary
 diary.zip
 dist-package/
 dist-package.zip

@@ -348,7 +348,7 @@ export default function Home() {
                 <div className="flex items-center gap-3">
                     {lastSaved && (
                         <span className="text-xs text-gray-400">
-                            Saved {format(lastSaved, 'HH:mm')}
+                            Saved {format(lastSaved, 'yyyy-MM-dd HH:mm')}
                         </span>
                     )}
                     <button
