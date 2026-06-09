@@ -14,7 +14,7 @@ interface StatsResponse {
     periods: Record<PeriodKey, PeriodStats>;
 }
 
-type PeriodKey = 'month' | 'week';
+type PeriodKey = 'last30' | 'last7';
 
 interface RatingDistributionItem {
     level: number;
@@ -33,8 +33,8 @@ interface PeriodStats {
 }
 
 const PERIODS: Array<{ key: PeriodKey; label: string }> = [
-    { key: 'month', label: 'This Month' },
-    { key: 'week', label: 'This Week' },
+    { key: 'last30', label: 'Last 30 Days' },
+    { key: 'last7', label: 'Last 7 Days' },
 ];
 
 const CHART_COLORS = ['#AF767F', '#ABAAA2', '#7B92A1', '#DA9C51', '#8FA08D'];
@@ -126,7 +126,7 @@ function RatingPie({ title, data }: { title: string; data: RatingDistributionIte
 
 export default function Stats() {
     const [stats, setStats] = useState<StatsResponse | null>(null);
-    const [selectedPeriod, setSelectedPeriod] = useState<PeriodKey>('month');
+    const [selectedPeriod, setSelectedPeriod] = useState<PeriodKey>('last30');
     const [loading, setLoading] = useState(false);
     const [hovered, setHovered] = useState<DayCell | null>(null);
 
