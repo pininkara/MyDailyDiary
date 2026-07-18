@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
-import { Search as SearchIcon, Calendar, Clock, Edit3, Heart, BatteryFull } from 'lucide-react';
+import { Search as SearchIcon, Calendar, Clock, Edit3, Heart, BatteryFull, Loader2 } from 'lucide-react';
 import { TextHighlight } from '../components/TextHighlight';
 import {
     ambientWeatherOptions,
@@ -33,27 +33,22 @@ export default function Search() {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchEntry[]>([]);
     const [loading, setLoading] = useState(false);
+    const [hasMore, setHasMore] = useState(false);
     const [baseWeather, setBaseWeather] = useState<BaseWeatherValue | ''>('');
     const [ambientWeathers, setAmbientWeathers] = useState<AmbientWeatherValue[]>([]);
     const [moods, setMoods] = useState<number[]>([]);
     const [fulfillments, setFulfillments] = useState<number[]>([]);
+    const sentinelRef = useRef<HTMLDivElement | null>(null);
+    const offsetRef = useRef(0);
+    const loadingRef = useRef(false);
+    const requestRef = useRef<AbortController | null>(null);
+    const limit = 20;
 
     const ratingOptions = useMemo(() => [1, 2, 3, 4, 5], []);
 
     const hasFilters =
         baseWeather !== '' || ambientWeathers.length > 0 || moods.length > 0 || fulfillments.length > 0;
     const hasActiveSearch = query.trim().length > 0 || hasFilters;
-
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            if (hasActiveSearch) {
-                performSearch();
-            } else {
-                setResults([]);
-            }
-        }, 500);
-        return () => clearTimeout(timer);
-    }, [query, baseWeather, ambientWeathers, moods, fulfillments, hasActiveSearch]);
 
     const toggleRating = (list: number[], value: number) =>
         list.includes(value) ? list.filter((item) => item !== value) : [...list, value].sort();
@@ -64,10 +59,23 @@ export default function Search() {
         );
     };
 
-    const performSearch = async () => {
+    const performSearch = useCallback(async (reset = false) => {
+        if (!reset && loadingRef.current) return;
+        if (reset) {
+            const previousRequest = requestRef.current;
+            requestRef.current = null;
+            previousRequest?.abort();
+        }
+
+        const controller = new AbortController();
+        requestRef.current = controller;
+        loadingRef.current = true;
         setLoading(true);
         try {
+            const currentOffset = reset ? 0 : offsetRef.current;
             const params = new URLSearchParams();
+            params.set('limit', String(limit));
+            params.set('offset', String(currentOffset));
             if (query.trim()) {
                 params.set('q', query.trim());
             }
@@ -77,14 +85,79 @@ export default function Search() {
             ambientWeathers.forEach((value) => params.append('ambient', value));
             moods.forEach((value) => params.append('mood', String(value)));
             fulfillments.forEach((value) => params.append('fulfillment', String(value)));
-            const res = await api.get(`/search?${params.toString()}`);
-            setResults(res.data || []);
+            const res = await api.get(`/search?${params.toString()}`, { signal: controller.signal });
+            const newResults: SearchEntry[] = res.data || [];
+            if (controller.signal.aborted) return;
+
+            if (reset) {
+                setResults(newResults);
+            } else {
+                setResults((current) => {
+                    const combined = [...current, ...newResults];
+                    return combined.filter(
+                        (entry, index, all) => all.findIndex((item) => item.id === entry.id) === index
+                    );
+                });
+            }
+            offsetRef.current = currentOffset + newResults.length;
+            setHasMore(newResults.length === limit);
         } catch (err) {
-            console.error(err);
+            if ((err as { code?: string }).code !== 'ERR_CANCELED') {
+                console.error(err);
+                setHasMore(false);
+            }
         } finally {
-            setLoading(false);
+            if (requestRef.current === controller) {
+                requestRef.current = null;
+                loadingRef.current = false;
+                setLoading(false);
+            }
         }
-    };
+    }, [ambientWeathers, baseWeather, fulfillments, moods, query]);
+
+    useEffect(() => {
+        const activeRequest = requestRef.current;
+        requestRef.current = null;
+        activeRequest?.abort();
+        loadingRef.current = false;
+        offsetRef.current = 0;
+        setResults([]);
+        setHasMore(hasActiveSearch);
+
+        if (!hasActiveSearch) {
+            loadingRef.current = false;
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        const timer = setTimeout(() => {
+            void performSearch(true);
+        }, 500);
+        return () => {
+            clearTimeout(timer);
+            const pendingRequest = requestRef.current;
+            requestRef.current = null;
+            pendingRequest?.abort();
+            loadingRef.current = false;
+        };
+    }, [hasActiveSearch, performSearch]);
+
+    useEffect(() => {
+        const sentinel = sentinelRef.current;
+        if (!sentinel || !hasActiveSearch || !hasMore || loading) return;
+
+        const observer = new IntersectionObserver(
+            (observations) => {
+                if (observations[0]?.isIntersecting) {
+                    void performSearch();
+                }
+            },
+            { rootMargin: '240px 0px' }
+        );
+        observer.observe(sentinel);
+        return () => observer.disconnect();
+    }, [hasActiveSearch, hasMore, loading, performSearch]);
 
     return (
         <div className="space-y-6">
@@ -244,9 +317,9 @@ export default function Search() {
             </div>
 
             <div className="space-y-4">
-                {hasActiveSearch && !loading && (
+                {hasActiveSearch && results.length > 0 && (
                     <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Found {results.length} result{results.length !== 1 ? 's' : ''}
+                        Showing {results.length} result{results.length !== 1 ? 's' : ''}
                     </p>
                 )}
 
@@ -305,6 +378,15 @@ export default function Search() {
                 {hasActiveSearch && !loading && results.length === 0 && (
                     <div className="text-center py-12 text-gray-500">
                         {query.trim() ? `No results found for "${query}"` : 'No results found for selected filters'}
+                    </div>
+                )}
+
+                <div ref={sentinelRef} className="h-1" aria-hidden="true" />
+
+                {loading && (
+                    <div className="flex items-center justify-center gap-2 py-4 text-sm text-gray-500 dark:text-gray-400">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading...
                     </div>
                 )}
             </div>

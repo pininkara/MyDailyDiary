@@ -8,6 +8,7 @@ import History from './pages/History';
 import Search from './pages/Search';
 import Settings from './pages/Settings';
 import Stats from './pages/Stats';
+import Thoughts from './pages/Thoughts';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     const { user, loading } = useAuth();
@@ -37,6 +38,7 @@ function AppRoutes() {
             >
                 <Route index element={<Home />} />
                 <Route path="history" element={<History />} />
+                <Route path="thoughts" element={<Thoughts />} />
                 <Route path="search" element={<Search />} />
                 <Route path="stats" element={<Stats />} />
                 <Route path="settings" element={<Settings />} />

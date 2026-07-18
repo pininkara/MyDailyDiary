@@ -42,6 +42,13 @@ func migrate(db *sql.DB) error {
             auto_title INTEGER NOT NULL DEFAULT 0
         );`,
 		`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);`,
+		`CREATE TABLE IF NOT EXISTS thoughts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );`,
+		`CREATE INDEX IF NOT EXISTS idx_thoughts_updated_at ON thoughts(updated_at DESC, id DESC);`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -284,7 +291,7 @@ func (a *App) listEntries(offset, limit int) ([]*Entry, error) {
 	return list, nil
 }
 
-func (a *App) searchEntries(q string, limit int, baseWeather string, ambientWeathers []string, moods []int, fulfillments []int) ([]*Entry, error) {
+func (a *App) searchEntries(q string, offset, limit int, baseWeather string, ambientWeathers []string, moods []int, fulfillments []int) ([]*Entry, error) {
 	clauses := []string{}
 	args := []any{}
 	if q != "" {
@@ -329,9 +336,9 @@ func (a *App) searchEntries(q string, limit int, baseWeather string, ambientWeat
         FROM entries
         WHERE %s
         ORDER BY day DESC
-        LIMIT ?
+		LIMIT ? OFFSET ?
     `, strings.Join(clauses, " AND "))
-	args = append(args, limit)
+	args = append(args, limit, offset)
 
 	rows, err := a.DB.Query(query, args...)
 	if err != nil {

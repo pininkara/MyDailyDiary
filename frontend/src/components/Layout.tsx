@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Book, Search, Settings, LogOut, History, BarChart3 } from 'lucide-react';
+import { Book, Search, Settings, LogOut, History, BarChart3, MessageSquareText } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { MouseRippleBackground } from './MouseRippleBackground';
 
@@ -14,6 +14,7 @@ export default function Layout() {
         { icon: History, label: 'History', path: '/history' },
         { icon: Search, label: 'Search', path: '/search' },
         { icon: BarChart3, label: 'Stats', path: '/stats' },
+        { icon: MessageSquareText, label: 'Thoughts', path: '/thoughts' },
         { icon: Settings, label: 'Settings', path: '/settings' },
     ];
 
@@ -101,12 +102,12 @@ export default function Layout() {
                                 key={item.path}
                                 to={item.path}
                                 className={cn(
-                                    "flex flex-col items-center p-2 rounded-lg",
+                                    "flex min-w-0 flex-1 flex-col items-center p-2 rounded-lg",
                                     isActive ? "text-indigo-600" : "text-gray-500"
                                 )}
                             >
                                 <Icon className="w-6 h-6" />
-                                <span className="text-xs mt-1">{item.label}</span>
+                                <span className="mt-1 max-w-full truncate text-[10px]">{item.label}</span>
                             </Link>
                         );
                     })}

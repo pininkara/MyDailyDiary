@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
-import { Calendar, Clock, ChevronDown, ChevronUp, Edit3, Heart, BatteryFull } from 'lucide-react';
+import { Calendar, Clock, ChevronDown, ChevronUp, Edit3, Heart, BatteryFull, Loader2 } from 'lucide-react';
 import { getAmbientWeatherEmojis, getBaseWeatherEmoji, countContentUnits } from '../lib/utils';
 
 interface HistoryEntry {
@@ -23,13 +23,15 @@ interface HistoryEntry {
 export default function History() {
     const [entries, setEntries] = useState<HistoryEntry[]>([]);
     const [loading, setLoading] = useState(false);
-    const [offset, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(true);
     const [expanded, setExpanded] = useState<Set<number>>(new Set());
     const [filterFrom, setFilterFrom] = useState('');
     const [filterTo, setFilterTo] = useState('');
     const [appliedFrom, setAppliedFrom] = useState('');
     const [appliedTo, setAppliedTo] = useState('');
+    const sentinelRef = useRef<HTMLDivElement | null>(null);
+    const offsetRef = useRef(0);
+    const loadingRef = useRef(false);
     const limit = 20;
 
     const toggleExpand = (id: number, e: React.MouseEvent) => {
@@ -46,11 +48,13 @@ export default function History() {
         });
     };
 
-    const loadEntries = async (reset = false) => {
-        if (loading) return;
+    const loadEntries = useCallback(async (reset = false) => {
+        if (loadingRef.current) return;
+
+        loadingRef.current = true;
         setLoading(true);
         try {
-            const currentOffset = reset ? 0 : offset;
+            const currentOffset = reset ? 0 : offsetRef.current;
             const params = new URLSearchParams({
                 limit: String(limit),
                 offset: String(currentOffset),
@@ -65,29 +69,47 @@ export default function History() {
             if (reset) {
                 setEntries(newEntries);
             } else {
-                setEntries(prev => [...prev, ...newEntries]);
+                setEntries((current) => {
+                    const combined = [...current, ...newEntries];
+                    return combined.filter(
+                        (entry, index, all) => all.findIndex((item) => item.id === entry.id) === index
+                    );
+                });
             }
 
-            if (newEntries.length < limit) {
-                setHasMore(false);
-            } else if (reset) {
-                setHasMore(true);
-            }
-            setOffset(currentOffset + limit);
+            setHasMore(newEntries.length === limit);
+            offsetRef.current = currentOffset + newEntries.length;
         } catch (err) {
             console.error(err);
+            setHasMore(false);
         } finally {
+            loadingRef.current = false;
             setLoading(false);
         }
-    };
+    }, [appliedFrom, appliedTo]);
 
     useEffect(() => {
-        loadEntries(true);
-    }, [appliedFrom, appliedTo]);
+        void loadEntries(true);
+    }, [loadEntries]);
+
+    useEffect(() => {
+        const sentinel = sentinelRef.current;
+        if (!sentinel || !hasMore || loading) return;
+
+        const observer = new IntersectionObserver(
+            (observations) => {
+                if (observations[0]?.isIntersecting) {
+                    void loadEntries();
+                }
+            },
+            { rootMargin: '240px 0px' }
+        );
+        observer.observe(sentinel);
+        return () => observer.disconnect();
+    }, [hasMore, loadEntries, loading]);
 
     const applyRange = () => {
         if (!filterFrom || !filterTo) return;
-        setOffset(0);
         setHasMore(true);
         setAppliedFrom(filterFrom);
         setAppliedTo(filterTo);
@@ -96,7 +118,6 @@ export default function History() {
     const clearRange = () => {
         setFilterFrom('');
         setFilterTo('');
-        setOffset(0);
         setHasMore(true);
         setAppliedFrom('');
         setAppliedTo('');
@@ -211,15 +232,12 @@ export default function History() {
                 ))}
             </div>
 
-            {hasMore && (
-                <div className="flex justify-center pt-4">
-                    <button
-                        onClick={() => loadEntries(false)}
-                        disabled={loading}
-                        className="px-6 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
-                    >
-                        {loading ? 'Loading...' : 'Load More'}
-                    </button>
+            <div ref={sentinelRef} className="h-1" aria-hidden="true" />
+
+            {loading && (
+                <div className="flex items-center justify-center gap-2 py-4 text-sm text-gray-500 dark:text-gray-400">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading...
                 </div>
             )}
 

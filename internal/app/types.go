@@ -28,6 +28,13 @@ type Entry struct {
 	AutoTitle       bool      `json:"auto_title"`
 }
 
+type Thought struct {
+	ID      int64     `json:"id"`
+	Content string    `json:"content"`
+	Created time.Time `json:"created_at"`
+	Updated time.Time `json:"updated_at"`
+}
+
 type DayCell struct {
 	Date  string `json:"date"`
 	Count int    `json:"count"`
