@@ -1,15 +1,15 @@
 # MDD-MyDailyDiary
 
-English version: [README.zh.md](README.zh.md)
+Chinese version: [README.zh.md](README.zh.md)
 
 MDD-MyDailyDiary is a self-hosted online journal built with a Go backend and a React frontend. It is designed for people who want to keep their writing private, keep their data under their own control, and edit from any device without depending on a third-party platform.
 
 🤖Vibe coding disclosure: more than 90% of the code in this project was generated with AI assistance. I performed limited testing to confirm that the app is usable, but I do not guarantee that it is free of bugs.
 
 ## Overview
-This is a personal journaling app focused on three things: long-term storage, fast daily writing, and easy review. It is not a social platform. It is a lightweight and private data tool that lets you write entries by date, search past records, review history, and keep everything inside your own SQLite database.
+This is a personal journaling app focused on three things: long-term storage, fast daily writing, and easy review. It is not a social platform. It is a lightweight and private data tool that lets you write entries by date, capture standalone thoughts, search past records, review history, and keep everything inside your own SQLite database.
 
-The app uses a decoupled single-page architecture. The frontend handles editing, browsing, search, and settings. The backend handles authentication, persistence, import/export, and optional LLM-powered title generation. The overall design intentionally stays simple: clear UI, clear APIs, and a deployment model that avoids unnecessary external dependencies.
+The app uses a decoupled single-page architecture. The frontend handles diary and thought editing, browsing, search, and settings. The backend handles authentication, persistence, import/export, and optional LLM-powered title generation. The overall design intentionally stays simple: clear UI, clear APIs, and a deployment model that avoids unnecessary external dependencies.
 
 If you want a private journal layer for your personal knowledge base, an emotional tracking tool, or a long-lived self-owned note archive, this project is built for that.
 
@@ -45,16 +45,19 @@ The database is intentionally kept unencrypted at the application layer. This pr
 ## Features
 - **Private deployment**: Keep data in your own environment and run it locally, on a server, or in Docker
 - **Quick daily entry**: Write by date and save changes manually when needed
+- **Standalone thoughts**: Capture title-free, body-only notes in a separate SQLite table; thoughts remain independent from diary entries and do not affect diary statistics
 - **Minimal writing surface**: No Markdown, no images, no videos, no complex rich-text editor, just a clean writing flow
 - **Mood and context tracking**: Record mood, fulfillment, base weather, and ambient weather to capture the context of each day
   - Mood and Fulfillment sliders track your emotional state for the day. Higher Mood means a happier day, higher Fulfillment means a busier and more fulfilling day.
   - Base weather slider records the primary weather conditions for the day.
   - Ambient weather tracks secondary weather conditions, presented as a multi-select list rather than a slider.
 - **Calendar-style review**: Jump back to any day through the calendar and history views
+- **Continuous browsing**: History, search results, and thoughts automatically load the next page as you approach the bottom
+- **Expandable entries**: Expand or collapse long diary content directly in history and search results
 - **Full-text search**: Find old entries by content, date, and other filters quickly
 - **Stats page**: See entry trends and summaries over time
 - **LLM summaries**: Optionally generate entry titles automatically to make long entries easier to scan. When disabled, the first few characters of the entry text serve as the default title
-- **Import and export**: Back up and migrate data through JSON import/export
+- **Import and export**: Back up and migrate diary entries and thoughts together through JSON import/export
 - **Basic personalization**: Set your username, avatar, and theme appearance
 
 ## Getting Started
@@ -144,6 +147,7 @@ Configuration file `config.toml` or environment variables:
 │     ├─ http.go          # Middleware and HTTP helpers
 │     ├─ llm.go           # LLM title generation logic
 │     ├─ server.go        # App startup and route registration
+│     ├─ thoughts.go      # Standalone thoughts API and pagination
 │     └─ types.go         # Core type definitions
 ├─ Dockerfile             # Multi-stage build file
 ├─ frontend/              # React frontend project

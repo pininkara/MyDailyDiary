@@ -29,7 +29,7 @@ type thoughtPage struct {
 
 func scanThought(scanner interface{ Scan(dest ...any) error }, thought *Thought) error {
 	var createdAt, updatedAt string
-	if err := scanner.Scan(&thought.ID, &thought.Content, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&thought.ID, &thought.UID, &thought.Content, &createdAt, &updatedAt); err != nil {
 		return err
 	}
 	var err error
@@ -74,7 +74,7 @@ func decodeThoughtCursor(value string) (*thoughtCursor, error) {
 }
 
 func (a *App) listThoughts(limit int, cursor *thoughtCursor) (thoughtPage, error) {
-	query := `SELECT id, content, created_at, updated_at FROM thoughts`
+	query := `SELECT id, uid, content, created_at, updated_at FROM thoughts`
 	args := make([]any, 0, 4)
 	if cursor != nil {
 		query += ` WHERE updated_at < ? OR (updated_at = ? AND id < ?)`
@@ -112,9 +112,54 @@ func (a *App) listThoughts(limit int, cursor *thoughtCursor) (thoughtPage, error
 	return page, nil
 }
 
+func (a *App) listAllThoughts() ([]*Thought, error) {
+	rows, err := a.DB.Query(`SELECT id, uid, content, created_at, updated_at FROM thoughts ORDER BY created_at ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	thoughts := make([]*Thought, 0)
+	for rows.Next() {
+		var thought Thought
+		if err := scanThought(rows, &thought); err != nil {
+			return nil, err
+		}
+		thoughts = append(thoughts, &thought)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return thoughts, nil
+}
+
+func (a *App) upsertImportedThought(uid, content string, createdAt, updatedAt time.Time) error {
+	created := createdAt.UTC().Format(thoughtTimeLayout)
+	updated := updatedAt.UTC().Format(thoughtTimeLayout)
+
+	var id int64
+	err := a.DB.QueryRow(`SELECT id FROM thoughts WHERE uid=? LIMIT 1`, uid).Scan(&id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = a.DB.Exec(
+			`INSERT INTO thoughts(uid, content, created_at, updated_at) VALUES(?,?,?,?)`,
+			uid, content, created, updated,
+		)
+		return err
+	}
+
+	_, err = a.DB.Exec(`UPDATE thoughts SET content=?, updated_at=? WHERE id=?`, content, updated, id)
+	return err
+}
+
 func (a *App) createThought(content string) (*Thought, error) {
 	now := time.Now().UTC().Format(thoughtTimeLayout)
-	result, err := a.DB.Exec(`INSERT INTO thoughts(content, created_at, updated_at) VALUES(?,?,?)`, content, now, now)
+	result, err := a.DB.Exec(
+		`INSERT INTO thoughts(uid, content, created_at, updated_at) VALUES(lower(hex(randomblob(16))),?,?,?)`,
+		content, now, now,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +171,7 @@ func (a *App) createThought(content string) (*Thought, error) {
 }
 
 func (a *App) getThought(id int64) (*Thought, error) {
-	row := a.DB.QueryRow(`SELECT id, content, created_at, updated_at FROM thoughts WHERE id=?`, id)
+	row := a.DB.QueryRow(`SELECT id, uid, content, created_at, updated_at FROM thoughts WHERE id=?`, id)
 	var thought Thought
 	if err := scanThought(row, &thought); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

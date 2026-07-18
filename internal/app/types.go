@@ -30,6 +30,7 @@ type Entry struct {
 
 type Thought struct {
 	ID      int64     `json:"id"`
+	UID     string    `json:"-"`
 	Content string    `json:"content"`
 	Created time.Time `json:"created_at"`
 	Updated time.Time `json:"updated_at"`

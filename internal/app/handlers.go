@@ -469,6 +469,11 @@ func (a *App) apiExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	thoughts, err := a.listAllThoughts()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	type jsonEntry struct {
 		Date            string   `json:"date"`
@@ -489,10 +494,25 @@ func (a *App) apiExport(w http.ResponseWriter, r *http.Request) {
 			AmbientWeathers: e.AmbientWeathers,
 		})
 	}
+	type jsonThought struct {
+		UID       string `json:"uid"`
+		Content   string `json:"content"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	thoughtsOut := make([]jsonThought, 0, len(thoughts))
+	for _, thought := range thoughts {
+		thoughtsOut = append(thoughtsOut, jsonThought{
+			UID:       thought.UID,
+			Content:   thought.Content,
+			CreatedAt: thought.Created.UTC().Format(time.RFC3339Nano),
+			UpdatedAt: thought.Updated.UTC().Format(time.RFC3339Nano),
+		})
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=diary-export-%s.json", time.Now().Format("20060102")))
-	json.NewEncoder(w).Encode(map[string]any{"entries": out})
+	json.NewEncoder(w).Encode(map[string]any{"entries": out, "thoughts": thoughtsOut})
 }
 
 func (a *App) apiImport(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +534,8 @@ func (a *App) apiImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		Entries []json.RawMessage `json:"entries"`
+		Entries  []json.RawMessage `json:"entries"`
+		Thoughts []json.RawMessage `json:"thoughts"`
 	}
 	if err := json.Unmarshal(b, &payload); err != nil {
 		http.Error(w, "JSON parse failed", http.StatusBadRequest)
@@ -574,6 +595,36 @@ func (a *App) apiImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	thoughtCount := 0
+	for _, raw := range payload.Thoughts {
+		var thoughtData map[string]any
+		if err := json.Unmarshal(raw, &thoughtData); err != nil {
+			continue
+		}
+		content, _ := getStringAny(thoughtData, "content")
+		uid, _ := getStringAny(thoughtData, "uid")
+		createdStr, _ := getStringAny(thoughtData, "createdat")
+		updatedStr, _ := getStringAny(thoughtData, "updatedat")
+		if uid == "" || content == "" || createdStr == "" {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, createdStr)
+		if err != nil {
+			continue
+		}
+		updatedAt := createdAt
+		if updatedStr != "" {
+			parsedUpdatedAt, err := time.Parse(time.RFC3339Nano, updatedStr)
+			if err != nil {
+				continue
+			}
+			updatedAt = parsedUpdatedAt
+		}
+		if err := a.upsertImportedThought(uid, content, createdAt, updatedAt); err == nil {
+			thoughtCount++
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]any{"imported": count})
+	json.NewEncoder(w).Encode(map[string]any{"imported": count, "thoughts_imported": thoughtCount})
 }

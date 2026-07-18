@@ -44,16 +44,29 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);`,
 		`CREATE TABLE IF NOT EXISTS thoughts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid TEXT NOT NULL DEFAULT '',
             content TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );`,
 		`CREATE INDEX IF NOT EXISTS idx_thoughts_updated_at ON thoughts(updated_at DESC, id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_thoughts_created_at ON thoughts(created_at);`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+	}
+	if _, err := db.Exec(`ALTER TABLE thoughts ADD COLUMN uid TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("add thought uid column: %w", err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE thoughts SET uid=lower(hex(randomblob(16))) WHERE uid IS NULL OR uid=''`); err != nil {
+		return fmt.Errorf("backfill thought uid: %w", err)
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_thoughts_uid ON thoughts(uid)`); err != nil {
+		return fmt.Errorf("create thought uid index: %w", err)
 	}
 	if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN day TEXT`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
