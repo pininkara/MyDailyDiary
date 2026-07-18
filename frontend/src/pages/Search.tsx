@@ -2,7 +2,17 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
-import { Search as SearchIcon, Calendar, Clock, Edit3, Heart, BatteryFull, Loader2 } from 'lucide-react';
+import {
+    Search as SearchIcon,
+    Calendar,
+    Clock,
+    ChevronDown,
+    ChevronUp,
+    Edit3,
+    Heart,
+    BatteryFull,
+    Loader2,
+} from 'lucide-react';
 import { TextHighlight } from '../components/TextHighlight';
 import {
     ambientWeatherOptions,
@@ -38,6 +48,7 @@ export default function Search() {
     const [ambientWeathers, setAmbientWeathers] = useState<AmbientWeatherValue[]>([]);
     const [moods, setMoods] = useState<number[]>([]);
     const [fulfillments, setFulfillments] = useState<number[]>([]);
+    const [expanded, setExpanded] = useState<Set<number>>(new Set());
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const offsetRef = useRef(0);
     const loadingRef = useRef(false);
@@ -45,6 +56,20 @@ export default function Search() {
     const limit = 20;
 
     const ratingOptions = useMemo(() => [1, 2, 3, 4, 5], []);
+
+    const toggleExpand = (id: number, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setExpanded(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
 
     const hasFilters =
         baseWeather !== '' || ambientWeathers.length > 0 || moods.length > 0 || fulfillments.length > 0;
@@ -362,15 +387,29 @@ export default function Search() {
                                 {/* moved edit_count to card footer */}
                             </div>
                         </div>
-                        <p className="text-gray-600 dark:text-gray-300 line-clamp-3">
-                            <TextHighlight text={entry.content} query={query} />
-                        </p>
-                        <div className="mt-4 flex justify-end items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-                            <div className="text-xs text-gray-500 dark:text-gray-400">{countContentUnits(entry.content)} words</div>
-                            <span className="flex items-center gap-1">
-                                <Edit3 className="w-4 h-4" />
-                                {entry.edit_count}
-                            </span>
+                        <div className="mt-2">
+                            <p className={`text-gray-600 dark:text-gray-300 ${expanded.has(entry.id) ? 'whitespace-pre-wrap' : 'line-clamp-3'}`}>
+                                <TextHighlight text={entry.content} query={query} />
+                            </p>
+                            {entry.content.length > 100 && (
+                                <button
+                                    onClick={(e) => toggleExpand(entry.id, e)}
+                                    className="mt-2 flex items-center gap-1 text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+                                >
+                                    {expanded.has(entry.id) ? (
+                                        <>Show Less <ChevronUp className="w-4 h-4" /></>
+                                    ) : (
+                                        <>Show More <ChevronDown className="w-4 h-4" /></>
+                                    )}
+                                </button>
+                            )}
+                            <div className="mt-4 flex justify-end items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                                <div className="text-xs text-gray-500 dark:text-gray-400">{countContentUnits(entry.content)} words</div>
+                                <span className="flex items-center gap-1">
+                                    <Edit3 className="w-4 h-4" />
+                                    {entry.edit_count}
+                                </span>
+                            </div>
                         </div>
                     </Link>
                 ))}
