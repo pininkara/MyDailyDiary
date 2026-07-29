@@ -24,10 +24,6 @@ func (a *App) generateTitle(content, date string) string {
 	if title == "" {
 		return fallback
 	}
-	rn := []rune(title)
-	if len(rn) > 40 {
-		title = string(rn[:40])
-	}
 	return title
 }
 
@@ -43,10 +39,6 @@ func (a *App) generateTitleInBackground(dateStr, content string) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return
-	}
-	rn := []rune(title)
-	if len(rn) > 40 {
-		title = string(rn[:40])
 	}
 	res, err := a.DB.Exec(`
         UPDATE entries
@@ -88,7 +80,7 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 	}
 	prompt := strings.TrimSpace(a.Cfg.LLM.Prompt)
 	if prompt == "" {
-		prompt = "请为下面这篇日记生成一个简短标题，只返回标题，不要解释。"
+		prompt = "请为下面这篇日记生成一个标题，只返回标题，不要解释。"
 	}
 
 	endpoint := baseURL
@@ -96,11 +88,10 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 		endpoint += "/responses"
 	}
 	body := map[string]any{
-		"model":             model,
-		"instructions":      prompt,
-		"input":             content,
-		"temperature":       0.3,
-		"max_output_tokens": 64,
+		"model":        model,
+		"instructions": prompt,
+		"input":        content,
+		"temperature":  0.3,
 	}
 	b, err := json.Marshal(body)
 	if err != nil {

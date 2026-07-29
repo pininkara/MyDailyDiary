@@ -33,7 +33,7 @@ func loadConfig(path string) *Config {
 	cfg.LLM.BaseURL = ""
 	cfg.LLM.APIKey = ""
 	cfg.LLM.Model = ""
-	cfg.LLM.Prompt = "请为下面这篇日记生成一个简短标题，只返回标题，不要解释。"
+	cfg.LLM.Prompt = "请为下面这篇日记生成一个标题，只返回标题，不要解释。"
 
 	b, err := os.ReadFile(path)
 	if err != nil {
