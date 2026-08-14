@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { format, addDays, subDays, parseISO } from 'date-fns';
 import { ChevronLeft, ChevronRight, Save, RefreshCw } from 'lucide-react';
-import api from '../lib/api';
+import api, { getApiErrorMessage } from '../lib/api';
 import {
     ambientWeatherOptions,
     baseWeatherOptions,
@@ -203,8 +203,8 @@ export default function Home() {
             }
         } catch (err) {
             console.error('generate+save title failed', err);
-            setToastMessage('生成标题失败');
-            setTimeout(() => setToastMessage(''), 2000);
+            setToastMessage(`生成标题失败：${getApiErrorMessage(err, '未知错误')}`);
+            setTimeout(() => setToastMessage(''), 6000);
             return;
         }
         setTimeout(() => setToastMessage(''), 1800);
@@ -286,6 +286,8 @@ export default function Home() {
             }
         } catch (err) {
             console.error('Failed to save', err);
+            setToastMessage(`保存失败：${getApiErrorMessage(err, '未知错误')}`);
+            setTimeout(() => setToastMessage(''), 6000);
         } finally {
             setSaving(false);
         }
@@ -412,8 +414,8 @@ export default function Home() {
                 </div>
             </div>
             {toastMessage && (
-                <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 z-50 pointer-events-none">
-                    <div className="inline-block bg-black/80 text-white text-sm px-4 py-2 rounded-md shadow-lg opacity-100 transition-all duration-200">
+                <div className="fixed bottom-8 left-1/2 z-50 w-[min(90vw,42rem)] -translate-x-1/2 pointer-events-none" role="alert">
+                    <div className="inline-block max-w-full break-words bg-black/80 text-white text-sm px-4 py-2 rounded-md shadow-lg opacity-100 transition-all duration-200">
                         {toastMessage}
                     </div>
                 </div>

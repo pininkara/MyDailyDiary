@@ -127,7 +127,7 @@ docker run -d -p 8080:8080 -v ${PWD}/data:/app/data --name diary diary-app
 - `server.address`: 监听地址 (默认 :8080)
 - `database.path`: SQLite 数据库路径
 - `llm.enabled`: 是否启用 LLM 自动标题总结
-- `llm.base_url`: OpenAI-compatible API Base URL，应用会调用 `{base_url}/responses`
+- `llm.base_url`: OpenAI-compatible API Base URL，应用会调用 `/v1/responses`（也兼容已带 `/v1` 的地址）
 - `llm.api_key`: LLM API Key
 - `llm.model`: LLM 模型名称
 - `llm.prompt`: 自动标题总结 Prompt

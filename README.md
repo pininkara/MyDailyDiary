@@ -127,7 +127,7 @@ Configuration file `config.toml` or environment variables:
 - `server.address`: Server listen address, default `:8080`
 - `database.path`: SQLite database path
 - `llm.enabled`: Enable LLM title summaries
-- `llm.base_url`: OpenAI-compatible API base URL; the app calls `{base_url}/responses`
+- `llm.base_url`: OpenAI-compatible API base URL; the app calls `/v1/responses` (a trailing `/v1` is also accepted)
 - `llm.api_key`: LLM API key
 - `llm.model`: LLM model name
 - `llm.prompt`: Prompt used for title generation

@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+func writeLLMError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":   "llm_summary_failed",
+		"message": err.Error(),
+	})
+}
+
 func (a *App) apiLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Token string `json:"token"`
@@ -359,7 +368,11 @@ func (a *App) apiGenerateTitle(w http.ResponseWriter, r *http.Request) {
 		// optional: use today
 		req.Date = time.Now().Format("2006-01-02")
 	}
-	title := a.generateTitle(req.Content, req.Date)
+	title, err := a.generateTitleWithError(req.Content, req.Date)
+	if err != nil {
+		writeLLMError(w, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"title": title})
 }
@@ -380,7 +393,11 @@ func (a *App) apiGenerateTitleAndSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate title via existing logic (may call LLM)
-	title := a.generateTitle(req.Content, req.Date)
+	title, err := a.generateTitleWithError(req.Content, req.Date)
+	if err != nil {
+		writeLLMError(w, err)
+		return
+	}
 
 	// Fetch existing entry to preserve other fields
 	existing, err := a.getEntryByDate(req.Date)

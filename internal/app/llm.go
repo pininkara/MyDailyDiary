@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,20 +12,25 @@ import (
 )
 
 func (a *App) generateTitle(content, date string) string {
+	title, _ := a.generateTitleWithError(content, date)
+	return title
+}
+
+func (a *App) generateTitleWithError(content, date string) (string, error) {
 	fallback := fallbackTitle(content, date)
 	if strings.TrimSpace(content) == "" || !a.Cfg.LLM.Enabled {
-		return fallback
+		return fallback, nil
 	}
 	title, err := a.summarizeTitleWithLLM(content)
 	if err != nil {
 		log.Printf("[WARN] llm title failed: %v", err)
-		return fallback
+		return fallback, err
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
-		return fallback
+		return fallback, nil
 	}
-	return title
+	return title, nil
 }
 
 func (a *App) generateTitleInBackground(dateStr, content string) {
@@ -85,12 +91,17 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 
 	endpoint := baseURL
 	if !strings.HasSuffix(endpoint, "/responses") {
-		endpoint += "/responses"
+		if strings.HasSuffix(endpoint, "/v1") {
+			endpoint += "/responses"
+		} else {
+			endpoint += "/v1/responses"
+		}
 	}
 	body := map[string]any{
 		"model":        model,
 		"instructions": prompt,
 		"input":        content,
+		"stream":       true,
 		"temperature":  0.3,
 	}
 	b, err := json.Marshal(body)
@@ -102,6 +113,7 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -113,6 +125,13 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(data))
 	}
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		return readResponsesStream(resp.Body)
+	}
+	return readResponsesJSON(resp.Body)
+}
+
+func readResponsesJSON(r io.Reader) (string, error) {
 	var out struct {
 		OutputText string `json:"output_text"`
 		Output     []struct {
@@ -122,7 +141,7 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 			} `json:"content"`
 		} `json:"output"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(r).Decode(&out); err != nil {
 		return "", err
 	}
 	text := strings.TrimSpace(out.OutputText)
@@ -143,4 +162,79 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 		return "", fmt.Errorf("llm returned no text")
 	}
 	return strings.Trim(text, " \t\r\n\"'“”‘’#：:"), nil
+}
+
+func readResponsesStream(r io.Reader) (string, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	var text strings.Builder
+	var dataLines []string
+
+	processEvent := func() error {
+		if len(dataLines) == 0 {
+			return nil
+		}
+		data := strings.Join(dataLines, "\n")
+		dataLines = dataLines[:0]
+		if data == "[DONE]" {
+			return nil
+		}
+		var event struct {
+			Type    string `json:"type"`
+			Delta   string `json:"delta"`
+			Message string `json:"message"`
+			Error   *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Response *struct {
+				Error *struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			} `json:"response"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return fmt.Errorf("decode llm stream event: %w", err)
+		}
+		switch event.Type {
+		case "response.output_text.delta":
+			text.WriteString(event.Delta)
+		case "error", "response.failed", "response.incomplete":
+			message := strings.TrimSpace(event.Message)
+			if message == "" && event.Error != nil {
+				message = strings.TrimSpace(event.Error.Message)
+			}
+			if message == "" && event.Response != nil && event.Response.Error != nil {
+				message = strings.TrimSpace(event.Response.Error.Message)
+			}
+			if message == "" {
+				message = data
+			}
+			return fmt.Errorf("llm stream %s: %s", event.Type, message)
+		}
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			if err := processEvent(); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read llm stream: %w", err)
+	}
+	if err := processEvent(); err != nil {
+		return "", err
+	}
+	result := strings.TrimSpace(text.String())
+	if result == "" {
+		return "", fmt.Errorf("llm returned no text")
+	}
+	return strings.Trim(result, " \t\r\n\"'“”‘’#：:"), nil
 }

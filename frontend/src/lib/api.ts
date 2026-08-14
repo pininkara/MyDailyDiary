@@ -21,3 +21,26 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+export function getApiErrorMessage(error: unknown, fallback: string): string {
+    if (axios.isAxiosError(error)) {
+        const data = error.response?.data;
+        if (typeof data === 'string' && data.trim()) {
+            return data.trim();
+        }
+        if (data && typeof data === 'object') {
+            const message = (data as { message?: unknown }).message;
+            if (typeof message === 'string' && message.trim()) {
+                return message.trim();
+            }
+            const detail = (data as { error?: unknown }).error;
+            if (typeof detail === 'string' && detail.trim()) {
+                return detail.trim();
+            }
+        }
+    }
+    if (error instanceof Error && error.message.trim()) {
+        return error.message.trim();
+    }
+    return fallback;
+}

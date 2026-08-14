@@ -25,8 +25,8 @@ username   = ""
 [llm]
 # Enable automatic title generation for entries whose title was not manually edited.
 enabled = false
-# OpenAI-compatible base URL; the app calls {base_url}/responses.
-# Example: "https://api.openai.com/v1"
+# OpenAI-compatible base URL; the app calls /v1/responses.
+# Examples: "https://api.openai.com" or "https://api.openai.com/v1"
 base_url = ""
 api_key = ""
 model = "gpt-5.4-mini"
