@@ -100,9 +100,20 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 	body := map[string]any{
 		"model":        model,
 		"instructions": prompt,
-		"input":        content,
-		"stream":       true,
-		"temperature":  0.3,
+		// Use the explicit message form instead of the string shorthand. Some
+		// OpenAI-compatible Responses adapters only translate message items into
+		// the provider-native contents field.
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]string{
+					{"type": "input_text", "text": content},
+				},
+			},
+		},
+		// Use a normal JSON response. Some Responses-compatible gateways close
+		// streaming requests before sending HTTP headers.
+		"stream": false,
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -113,7 +124,7 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -180,13 +191,26 @@ func readResponsesStream(r io.Reader) (string, error) {
 			return nil
 		}
 		var event struct {
-			Type    string `json:"type"`
-			Delta   string `json:"delta"`
+			Type       string `json:"type"`
+			Delta      string `json:"delta"`
+			Text       string `json:"text"`
+			OutputText string `json:"output_text"`
+			Output     []struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"output"`
 			Message string `json:"message"`
 			Error   *struct {
 				Message string `json:"message"`
 			} `json:"error"`
 			Response *struct {
+				OutputText string `json:"output_text"`
+				Output     []struct {
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"output"`
 				Error *struct {
 					Message string `json:"message"`
 				} `json:"error"`
@@ -198,6 +222,29 @@ func readResponsesStream(r io.Reader) (string, error) {
 		switch event.Type {
 		case "response.output_text.delta":
 			text.WriteString(event.Delta)
+		case "response.output_text.done":
+			if text.Len() == 0 && event.Text != "" {
+				text.WriteString(event.Text)
+			}
+		case "response.completed":
+			if text.Len() == 0 {
+				completed := ""
+				if event.Response != nil {
+					completed = event.Response.OutputText
+					if completed == "" {
+						completed = outputTextFromItems(event.Response.Output)
+					}
+				}
+				if completed == "" {
+					completed = event.OutputText
+				}
+				if completed == "" {
+					completed = outputTextFromItems(event.Output)
+				}
+				if completed != "" {
+					text.WriteString(completed)
+				}
+			}
 		case "error", "response.failed", "response.incomplete":
 			message := strings.TrimSpace(event.Message)
 			if message == "" && event.Error != nil {
@@ -236,5 +283,29 @@ func readResponsesStream(r io.Reader) (string, error) {
 	if result == "" {
 		return "", fmt.Errorf("llm returned no text")
 	}
+	// Some compatible services put a complete JSON response envelope inside a
+	// text event. Unwrap its output text instead of saving the envelope as title.
+	if json.Valid([]byte(result)) {
+		unwrapped, err := readResponsesJSON(strings.NewReader(result))
+		if err != nil {
+			return "", fmt.Errorf("llm stream returned a JSON envelope without output text: %w", err)
+		}
+		return unwrapped, nil
+	}
 	return strings.Trim(result, " \t\r\n\"'“”‘’#：:"), nil
+}
+
+func outputTextFromItems(items []struct {
+	Content []struct {
+		Text string `json:"text"`
+	} `json:"content"`
+}) string {
+	for _, item := range items {
+		for _, content := range item.Content {
+			if strings.TrimSpace(content.Text) != "" {
+				return strings.TrimSpace(content.Text)
+			}
+		}
+	}
+	return ""
 }
