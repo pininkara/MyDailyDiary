@@ -342,14 +342,15 @@ func (a *App) apiStats(w http.ResponseWriter, r *http.Request) {
 func (a *App) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"username":     a.Cfg.UI.Username,
-		"avatar_url":   a.Cfg.UI.AvatarURL,
-		"token_mask":   maskToken(a.Cfg.Auth.Token),
-		"llm_enabled":  a.Cfg.LLM.Enabled,
-		"llm_base_url": a.Cfg.LLM.BaseURL,
-		"llm_model":    a.Cfg.LLM.Model,
-		"llm_prompt":   a.Cfg.LLM.Prompt,
-		"llm_key_mask": maskToken(a.Cfg.LLM.APIKey),
+		"username":       a.Cfg.UI.Username,
+		"avatar_url":     a.Cfg.UI.AvatarURL,
+		"token_mask":     maskToken(a.Cfg.Auth.Token),
+		"llm_enabled":    a.Cfg.LLM.Enabled,
+		"llm_api_format": a.Cfg.LLM.APIFormat,
+		"llm_base_url":   a.Cfg.LLM.BaseURL,
+		"llm_model":      a.Cfg.LLM.Model,
+		"llm_prompt":     a.Cfg.LLM.Prompt,
+		"llm_key_mask":   maskToken(a.Cfg.LLM.APIKey),
 	})
 }
 
@@ -440,18 +441,29 @@ func (a *App) apiGenerateTitleAndSave(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username   string `json:"username"`
-		AvatarURL  string `json:"avatar_url"`
-		Token      string `json:"token"`
-		LLMEnabled bool   `json:"llm_enabled"`
-		LLMBaseURL string `json:"llm_base_url"`
-		LLMAPIKey  string `json:"llm_api_key"`
-		LLMModel   string `json:"llm_model"`
-		LLMPrompt  string `json:"llm_prompt"`
+		Username     string  `json:"username"`
+		AvatarURL    string  `json:"avatar_url"`
+		Token        string  `json:"token"`
+		LLMEnabled   bool    `json:"llm_enabled"`
+		LLMAPIFormat *string `json:"llm_api_format"`
+		LLMBaseURL   string  `json:"llm_base_url"`
+		LLMAPIKey    string  `json:"llm_api_key"`
+		LLMModel     string  `json:"llm_model"`
+		LLMPrompt    string  `json:"llm_prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
+	}
+
+	apiFormat := a.Cfg.LLM.APIFormat
+	if req.LLMAPIFormat != nil {
+		var err error
+		apiFormat, err = normalizeLLMAPIFormat(*req.LLMAPIFormat)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	a.Cfg.UI.Username = strings.TrimSpace(req.Username)
@@ -464,6 +476,7 @@ func (a *App) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.Cfg.LLM.Enabled = req.LLMEnabled
+	a.Cfg.LLM.APIFormat = apiFormat
 	a.Cfg.LLM.BaseURL = strings.TrimSpace(req.LLMBaseURL)
 	a.Cfg.LLM.Model = strings.TrimSpace(req.LLMModel)
 	a.Cfg.LLM.Prompt = strings.TrimSpace(req.LLMPrompt)

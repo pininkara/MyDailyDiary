@@ -30,6 +30,7 @@ func loadConfig(path string) *Config {
 	cfg.UI.AvatarURL = ""
 	cfg.UI.Username = ""
 	cfg.LLM.Enabled = false
+	cfg.LLM.APIFormat = "openai"
 	cfg.LLM.BaseURL = ""
 	cfg.LLM.APIKey = ""
 	cfg.LLM.Model = ""
@@ -42,6 +43,9 @@ func loadConfig(path string) *Config {
 	}
 	if err := toml.Unmarshal(b, cfg); err != nil {
 		log.Printf("[WARN] parse config failed: %v; using defaults", err)
+	}
+	if format, err := normalizeLLMAPIFormat(cfg.LLM.APIFormat); err == nil {
+		cfg.LLM.APIFormat = format
 	}
 	return cfg
 }

@@ -9,6 +9,7 @@ export default function Settings() {
     const [avatarUrl, setAvatarUrl] = useState('');
     const [token, setToken] = useState('');
     const [llmEnabled, setLlmEnabled] = useState(false);
+    const [llmApiFormat, setLlmApiFormat] = useState('openai');
     const [llmBaseUrl, setLlmBaseUrl] = useState('');
     const [llmApiKey, setLlmApiKey] = useState('');
     const [llmModel, setLlmModel] = useState('');
@@ -28,6 +29,7 @@ export default function Settings() {
             setAvatarUrl(res.data.avatar_url || '');
             setToken(res.data.token_mask || '');
             setLlmEnabled(!!res.data.llm_enabled);
+            setLlmApiFormat(res.data.llm_api_format || 'openai');
             setLlmBaseUrl(res.data.llm_base_url || '');
             setLlmApiKey(res.data.llm_key_mask || '');
             setLlmModel(res.data.llm_model || '');
@@ -47,6 +49,7 @@ export default function Settings() {
                 avatar_url: avatarUrl,
                 token: token.includes('*') ? '' : token, // Only send if changed (not masked)
                 llm_enabled: llmEnabled,
+                llm_api_format: llmApiFormat,
                 llm_base_url: llmBaseUrl,
                 llm_api_key: llmApiKey.includes('*') ? '' : llmApiKey,
                 llm_model: llmModel,
@@ -152,12 +155,25 @@ export default function Settings() {
                         </div>
 
                         <div>
+                            <label htmlFor="llm-api-format" className="block text-sm font-medium text-gray-700 dark:text-gray-300">API Format</label>
+                            <select
+                                id="llm-api-format"
+                                value={llmApiFormat}
+                                onChange={(e) => setLlmApiFormat(e.target.value)}
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm p-2 border"
+                            >
+                                <option value="openai">OpenAI</option>
+                                <option value="gemini">Gemini</option>
+                            </select>
+                        </div>
+
+                        <div>
                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Base URL</label>
                             <input
                                 type="text"
                                 value={llmBaseUrl}
                                 onChange={(e) => setLlmBaseUrl(e.target.value)}
-                                placeholder="https://api.openai.com/v1"
+                                placeholder={llmApiFormat === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'}
                                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm p-2 border"
                             />
                         </div>
@@ -179,7 +195,7 @@ export default function Settings() {
                                 type="text"
                                 value={llmModel}
                                 onChange={(e) => setLlmModel(e.target.value)}
-                                placeholder="gpt-4o-mini"
+                                placeholder={llmApiFormat === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini'}
                                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm p-2 border"
                             />
                         </div>

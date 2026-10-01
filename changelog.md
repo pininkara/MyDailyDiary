@@ -1,1 +1,2 @@
+- v1.1.0：添加Gemini API兼容；标题总结会同步发送日记日期
 - v1.0.0：修改LLM为同步，不再使用流式；加入changelog；加入git-push脚本

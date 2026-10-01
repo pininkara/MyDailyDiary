@@ -127,10 +127,24 @@ Configuration file `config.toml` or environment variables:
 - `server.address`: Server listen address, default `:8080`
 - `database.path`: SQLite database path
 - `llm.enabled`: Enable LLM title summaries
-- `llm.base_url`: OpenAI-compatible API base URL; the app calls `/v1/responses` (a trailing `/v1` is also accepted)
+- `llm.api_format`: API format, `openai` (default, Responses API) or `gemini` (native generateContent API); also selectable in Settings
+- `llm.base_url`: API base URL; OpenAI calls `/v1/responses` (a trailing `/v1` is also accepted). Gemini calls `/v1beta/models/{model}:generateContent`; a trailing `/v1beta` or `/v1` is also accepted
 - `llm.api_key`: LLM API key
 - `llm.model`: LLM model name
 - `llm.prompt`: Prompt used for title generation
+
+Title generation sends the diary's date (`YYYY-MM-DD`) along with its content, including when summarizing older entries.
+
+To use Gemini, set these values under `[llm]` (see Google's [generateContent API reference](https://ai.google.dev/api/generate-content)):
+
+```toml
+[llm]
+enabled = true
+api_format = "gemini"
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+api_key = "YOUR_GEMINI_API_KEY"
+model = "YOUR_GEMINI_MODEL"
+```
 
 ## Project Layout
 ```

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -21,7 +22,7 @@ func (a *App) generateTitleWithError(content, date string) (string, error) {
 	if strings.TrimSpace(content) == "" || !a.Cfg.LLM.Enabled {
 		return fallback, nil
 	}
-	title, err := a.summarizeTitleWithLLM(content)
+	title, err := a.summarizeTitleWithLLM(content, date)
 	if err != nil {
 		log.Printf("[WARN] llm title failed: %v", err)
 		return fallback, err
@@ -37,7 +38,7 @@ func (a *App) generateTitleInBackground(dateStr, content string) {
 	if strings.TrimSpace(content) == "" || !a.Cfg.LLM.Enabled {
 		return
 	}
-	title, err := a.summarizeTitleWithLLM(content)
+	title, err := a.summarizeTitleWithLLM(content, dateStr)
 	if err != nil {
 		log.Printf("[WARN] background llm title failed: %v", err)
 		return
@@ -60,11 +61,11 @@ func (a *App) generateTitleInBackground(dateStr, content string) {
 	}
 }
 
-func (a *App) summarizeTitleWithLLM(content string) (string, error) {
+func (a *App) summarizeTitleWithLLM(content, date string) (string, error) {
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		title, err := a.summarizeTitleWithLLMOnce(content)
+		title, err := a.summarizeTitleWithLLMOnce(content, date)
 		if err == nil {
 			return title, nil
 		}
@@ -77,7 +78,22 @@ func (a *App) summarizeTitleWithLLM(content string) (string, error) {
 	return "", lastErr
 }
 
-func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
+func normalizeLLMAPIFormat(format string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "openai":
+		return "openai", nil
+	case "gemini":
+		return "gemini", nil
+	default:
+		return "", fmt.Errorf("unsupported llm api_format %q: use openai or gemini", format)
+	}
+}
+
+func (a *App) summarizeTitleWithLLMOnce(content, date string) (string, error) {
+	apiFormat, err := normalizeLLMAPIFormat(a.Cfg.LLM.APIFormat)
+	if err != nil {
+		return "", err
+	}
 	baseURL := strings.TrimRight(strings.TrimSpace(a.Cfg.LLM.BaseURL), "/")
 	apiKey := strings.TrimSpace(a.Cfg.LLM.APIKey)
 	model := strings.TrimSpace(a.Cfg.LLM.Model)
@@ -88,32 +104,58 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 	if prompt == "" {
 		prompt = "请为下面这篇日记生成一个标题，只返回标题，不要解释。"
 	}
+	date = strings.TrimSpace(date)
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+	input := fmt.Sprintf("日记日期：%s\n\n日记正文：\n%s", date, content)
 
 	endpoint := baseURL
-	if !strings.HasSuffix(endpoint, "/responses") {
-		if strings.HasSuffix(endpoint, "/v1") {
-			endpoint += "/responses"
-		} else {
-			endpoint += "/v1/responses"
+	var body map[string]any
+	if apiFormat == "gemini" {
+		if !strings.HasSuffix(endpoint, ":generateContent") {
+			if !strings.HasSuffix(endpoint, "/v1beta") && !strings.HasSuffix(endpoint, "/v1") {
+				endpoint += "/v1beta"
+			}
+			endpoint += "/models/" + url.PathEscape(strings.TrimPrefix(model, "models/")) + ":generateContent"
 		}
-	}
-	body := map[string]any{
-		"model":        model,
-		"instructions": prompt,
-		// Use the explicit message form instead of the string shorthand. Some
-		// OpenAI-compatible Responses adapters only translate message items into
-		// the provider-native contents field.
-		"input": []map[string]any{
-			{
-				"role": "user",
-				"content": []map[string]string{
-					{"type": "input_text", "text": content},
+		body = map[string]any{
+			"systemInstruction": map[string]any{
+				"parts": []map[string]string{{"text": prompt}},
+			},
+			"contents": []map[string]any{
+				{
+					"role":  "user",
+					"parts": []map[string]string{{"text": input}},
 				},
 			},
-		},
-		// Use a normal JSON response. Some Responses-compatible gateways close
-		// streaming requests before sending HTTP headers.
-		"stream": false,
+		}
+	} else {
+		if !strings.HasSuffix(endpoint, "/responses") {
+			if strings.HasSuffix(endpoint, "/v1") {
+				endpoint += "/responses"
+			} else {
+				endpoint += "/v1/responses"
+			}
+		}
+		body = map[string]any{
+			"model":        model,
+			"instructions": prompt,
+			// Use the explicit message form instead of the string shorthand. Some
+			// OpenAI-compatible Responses adapters only translate message items into
+			// the provider-native contents field.
+			"input": []map[string]any{
+				{
+					"role": "user",
+					"content": []map[string]string{
+						{"type": "input_text", "text": input},
+					},
+				},
+			},
+			// Use a normal JSON response. Some Responses-compatible gateways close
+			// streaming requests before sending HTTP headers.
+			"stream": false,
+		}
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -125,7 +167,11 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiFormat == "gemini" {
+		req.Header.Set("x-goog-api-key", apiKey)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -136,10 +182,58 @@ func (a *App) summarizeTitleWithLLMOnce(content string) (string, error) {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(data))
 	}
+	if apiFormat == "gemini" {
+		return readGeminiJSON(resp.Body)
+	}
 	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
 		return readResponsesStream(resp.Body)
 	}
 	return readResponsesJSON(resp.Body)
+}
+
+func readGeminiJSON(r io.Reader) (string, error) {
+	var out struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text    string `json:"text"`
+					Thought bool   `json:"thought"`
+				} `json:"parts"`
+			} `json:"content"`
+			FinishReason string `json:"finishReason"`
+		} `json:"candidates"`
+		PromptFeedback struct {
+			BlockReason string `json:"blockReason"`
+		} `json:"promptFeedback"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(r).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.Error != nil {
+		return "", fmt.Errorf("gemini error: %s", out.Error.Message)
+	}
+	if out.PromptFeedback.BlockReason != "" && out.PromptFeedback.BlockReason != "BLOCK_REASON_UNSPECIFIED" {
+		return "", fmt.Errorf("gemini prompt blocked: %s", out.PromptFeedback.BlockReason)
+	}
+	for _, candidate := range out.Candidates {
+		var text strings.Builder
+		for _, part := range candidate.Content.Parts {
+			if !part.Thought {
+				text.WriteString(part.Text)
+			}
+		}
+		title := strings.Trim(text.String(), " \t\r\n\"'“”‘’#：:")
+		if title != "" {
+			return title, nil
+		}
+	}
+	if len(out.Candidates) > 0 && out.Candidates[0].FinishReason != "" {
+		return "", fmt.Errorf("gemini returned no text (finishReason: %s)", out.Candidates[0].FinishReason)
+	}
+	return "", fmt.Errorf("llm returned no text")
 }
 
 func readResponsesJSON(r io.Reader) (string, error) {

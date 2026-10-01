@@ -127,10 +127,24 @@ docker run -d -p 8080:8080 -v ${PWD}/data:/app/data --name diary diary-app
 - `server.address`: 监听地址 (默认 :8080)
 - `database.path`: SQLite 数据库路径
 - `llm.enabled`: 是否启用 LLM 自动标题总结
-- `llm.base_url`: OpenAI-compatible API Base URL，应用会调用 `/v1/responses`（也兼容已带 `/v1` 的地址）
+- `llm.api_format`: API 格式，`openai`（默认，Responses API）或 `gemini`（原生 generateContent API），也可以在设置页面选择
+- `llm.base_url`: API Base URL；OpenAI 调用 `/v1/responses`（兼容已带 `/v1` 的地址）；Gemini 调用 `/v1beta/models/{model}:generateContent`（兼容已带 `/v1beta` 或 `/v1` 的地址）
 - `llm.api_key`: LLM API Key
 - `llm.model`: LLM 模型名称
 - `llm.prompt`: 自动标题总结 Prompt
+
+生成标题时会将日记所属日期（`YYYY-MM-DD`）和正文一起发送给模型，总结历史日记时也会使用对应日期。
+
+使用 Gemini 时，在 `[llm]` 中配置如下（接口说明见 Google 的 [generateContent API 文档](https://ai.google.dev/api/generate-content)）：
+
+```toml
+[llm]
+enabled = true
+api_format = "gemini"
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+api_key = "YOUR_GEMINI_API_KEY"
+model = "YOUR_GEMINI_MODEL"
+```
 
 ## 目录结构
 ```

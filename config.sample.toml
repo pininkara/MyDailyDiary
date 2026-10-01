@@ -25,9 +25,13 @@ username   = ""
 [llm]
 # Enable automatic title generation for entries whose title was not manually edited.
 enabled = false
-# OpenAI-compatible base URL; the app calls /v1/responses.
-# Examples: "https://api.openai.com" or "https://api.openai.com/v1"
+# API format: "openai" (default, Responses API) or "gemini" (native generateContent API).
+api_format = "openai"
+# API base URL; OpenAI calls /v1/responses, Gemini calls /v1beta/models/{model}:generateContent.
+# OpenAI examples: "https://api.openai.com" or "https://api.openai.com/v1"
+# Gemini examples: "https://generativelanguage.googleapis.com" or "https://generativelanguage.googleapis.com/v1beta"
 base_url = ""
 api_key = ""
-model = "gpt-5.4-mini"
+model = "gpt-5.4-mini" # Set to your Gemini model name when api_format = "gemini".
+# The diary's date (YYYY-MM-DD) is sent with its content for title generation.
 prompt = "请为下面这篇日记生成一个标题，只返回标题，不要解释。你应该高度概括今天做的事和心理感受，不要使用“难过的一天”这种通用标题。"

@@ -74,10 +74,11 @@ type Config struct {
 		Username  string `toml:"username"`
 	} `toml:"ui"`
 	LLM struct {
-		Enabled bool   `toml:"enabled"`
-		BaseURL string `toml:"base_url"`
-		APIKey  string `toml:"api_key"`
-		Model   string `toml:"model"`
-		Prompt  string `toml:"prompt"`
+		Enabled   bool   `toml:"enabled"`
+		APIFormat string `toml:"api_format"`
+		BaseURL   string `toml:"base_url"`
+		APIKey    string `toml:"api_key"`
+		Model     string `toml:"model"`
+		Prompt    string `toml:"prompt"`
 	} `toml:"llm"`
 }
